@@ -1,5 +1,11 @@
 # jobscout
 
+[![CI](https://github.com/conglei/jobscout/actions/workflows/ci.yml/badge.svg)](https://github.com/conglei/jobscout/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/conglei/jobscout/branch/main/graph/badge.svg)](https://codecov.io/gh/conglei/jobscout)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/conglei/jobscout/badge)](https://scorecard.dev/viewer/?uri=github.com/conglei/jobscout)
+[![CodeRabbit](https://img.shields.io/coderabbit/prs/github/conglei/jobscout?labelColor=171717&color=FF570A&label=CodeRabbit)](https://coderabbit.ai)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 MCP-native job search over the **open-jobs** dataset (~1M live roles). A Rust backend exposes search +
 optional resume-aware ranking as **MCP tools** (and a small REST/SSE API), with a React UI rendered both
 as a standalone web app and as an **MCP App** inside Claude. The intended flow: an agent narrows your

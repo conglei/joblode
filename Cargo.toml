@@ -10,7 +10,7 @@ repository = "https://github.com/conglei/jobscout"
 authors = ["Conglei Shi"]
 
 [workspace.dependencies]
-jobscout-core = { path = "crates/jobscout-core" }
+jobscout-core = { path = "crates/jobscout-core", version = "0.1.0" }
 
 # Keep release builds lean and fast to link for a locally-run binary.
 [profile.release]

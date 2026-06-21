@@ -22,6 +22,8 @@ rustfmt.pkg-path = "rustfmt"
 nodejs.pkg-path = "nodejs"
 pnpm.pkg-path = "pnpm"
 duckdb.pkg-path = "duckdb"
+cargo-deny.pkg-path = "cargo-deny"
+cargo-llvm-cov.pkg-path = "cargo-llvm-cov"
 # gum.pkg-path = "gum"
 # gum.version = "^0.14.5"
 
