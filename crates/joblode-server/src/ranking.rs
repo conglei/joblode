@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use joblode_core::{Criteria, Job, JobStore};
-use joblode_rank::{Candidate, Method, ModelClient, RankRequest};
+use joblode_rank::{Candidate, EmbedClient, Method, ModelClient, RankRequest};
 
 use crate::dto::{FeedbackItem, RankParams, RankResults};
 
@@ -57,9 +57,27 @@ struct Prepared {
 pub async fn run(
     store: Arc<Mutex<JobStore>>,
     model: Option<Arc<dyn ModelClient>>,
+    embed: Option<Arc<dyn EmbedClient>>,
     params: RankParams,
 ) -> Result<RankResults, RankError> {
     let method = parse_method(params.method.as_deref())?;
+
+    // The semantic `query` is the cold-start ranking signal: embed it and fold it
+    // in as an extra positive, so rank blends "what you asked for" with "what you
+    // liked". Needs an embeddings model; without one we rank on feedback alone.
+    let query_vec: Option<Vec<f32>> = match (params.filter.semantic_query(), &embed) {
+        (Some(query), Some(embed)) => Some(
+            embed
+                .embed(query)
+                .await
+                .map_err(|error| RankError::Internal(format!("embedding failed: {error}")))?,
+        ),
+        (Some(_), None) => {
+            tracing::warn!("rank query ignored: no embeddings model configured");
+            None
+        }
+        (None, _) => None,
+    };
 
     // Validate model-method preconditions up front, so any later failure from the
     // rank call is unambiguously internal (no error-string sniffing).
@@ -116,6 +134,7 @@ pub async fn run(
             &ids,
             &feedback,
             need_metadata,
+            query_vec,
         )
     })
     .await
@@ -166,6 +185,7 @@ fn prepare_candidates(
     ids: &[String],
     feedback: &[FeedbackItem],
     need_metadata: bool,
+    query_vec: Option<Vec<f32>>,
 ) -> anyhow::Result<Prepared> {
     // (id, title, summary) per candidate — title/summary empty on the free path.
     let candidates_meta: Vec<(String, String, String)> = if need_metadata {
@@ -238,6 +258,15 @@ fn prepare_candidates(
                 None => {}
             }
         }
+    }
+
+    // Fold the query in as a positive, truncated to the candidates' embedding space
+    // (the sidecar dim when attached). With no feedback this is the only positive,
+    // so rank orders by query similarity; with feedback it blends.
+    if let Some(mut query) = query_vec {
+        let dim = store.semantic_index_dim().unwrap_or(query.len());
+        query.truncate(dim);
+        positives.push(query);
     }
 
     Ok(Prepared {

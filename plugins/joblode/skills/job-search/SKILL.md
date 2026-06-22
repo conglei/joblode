@@ -17,11 +17,12 @@ them.
   `query`** for semantic match against the job description. Filter-only needs no key;
   a `query` orders by similarity and attaches a `score` (needs an embeddings key).
 - **`rank_jobs`** — the **finalization** step. Once the criteria are settled, rank the
-  **whole** matching set into an ordered shortlist `{id, score, why}` by the user's
-  taste — learned **for free** from `feedback: [{id, label}]` (`liked`/`disliked`).
-  Fast, keyless, **no resume**. Pass `top` (default 25; ask for ~100 for a final list).
-  (`match`/`pairwise` are an optional cheap-model refine — need a key + resume, much
-  slower; rarely worth it.)
+  **whole** matching set into an ordered shortlist `{id, score, why}`. Pass the same
+  filters (and the same `query` if you used one) plus `feedback: [{id, label}]`: it
+  blends **what the user asked for** (`query` similarity — the cold-start signal) with
+  **what they liked** (taste from feedback), **for free, no resume**. Pass `top`
+  (default 25; ask for ~100). (`match`/`pairwise` cheap-model refine is optional and
+  much slower; rarely worth it.)
 - **`get_job`** — one role's full record incl. `jd_markdown`.
 
 The result-returning tools render an **interactive card** in the conversation when

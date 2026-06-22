@@ -118,19 +118,24 @@ impl JobServer {
     }
 
     #[tool(
-        description = "FINALIZE (order the whole set). Once the search criteria are settled, call rank_jobs with those same hard filters to rank the WHOLE matching set into a shortlist by the user's taste — learned for free from prior feedback (liked/disliked role ids). Fast and keyless; no resume needed. Pass feedback:[{id,label}] and optionally top (default 25; ask for more, e.g. 100, for a final list). Returns {results:[{id, score, why}]}. (Optional cheap-model refine via method 'match'/'pairwise' needs a key + resume and is much slower — rarely needed.)"
+        description = "FINALIZE (order the whole set). Once the search criteria are settled, call rank_jobs with those same hard filters (and the same `query` if you used one) to rank the WHOLE matching set into a shortlist. It blends two signals, for free: similarity to the `query` (what the user asked for — the cold-start signal) and the user's taste from prior `feedback:[{id,label}]` (liked/disliked role ids — what they actually liked). Fast and keyless; no resume needed. Optionally pass top (default 25; ask for ~100 for a final list). Returns {results:[{id, score, why}]}. (Optional cheap-model refine via method 'match'/'pairwise' needs a key + resume and is much slower — rarely needed.)"
     )]
     async fn rank_jobs(
         &self,
         Parameters(params): Parameters<RankParams>,
     ) -> Result<Json<RankResults>, ErrorData> {
-        ranking::run(self.store.clone(), self.model.clone(), params)
-            .await
-            .map(Json)
-            .map_err(|error| match error {
-                RankError::BadRequest(message) => ErrorData::invalid_params(message, None),
-                RankError::Internal(message) => ErrorData::internal_error(message, None),
-            })
+        ranking::run(
+            self.store.clone(),
+            self.model.clone(),
+            self.embed.clone(),
+            params,
+        )
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            RankError::BadRequest(message) => ErrorData::invalid_params(message, None),
+            RankError::Internal(message) => ErrorData::internal_error(message, None),
+        })
     }
 }
 

@@ -85,13 +85,18 @@ async fn rank(
     State(state): State<ApiState>,
     Json(params): Json<RankParams>,
 ) -> Result<Json<RankResults>, (StatusCode, String)> {
-    ranking::run(state.store.clone(), state.model.clone(), params)
-        .await
-        .map(Json)
-        .map_err(|error| match error {
-            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-            RankError::Internal(detail) => internal("rank", detail),
-        })
+    ranking::run(
+        state.store.clone(),
+        state.model.clone(),
+        state.embed.clone(),
+        params,
+    )
+    .await
+    .map(Json)
+    .map_err(|error| match error {
+        RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+        RankError::Internal(detail) => internal("rank", detail),
+    })
 }
 
 /// Logs the real failure server-side and returns an opaque 500, so DuckDB/query
@@ -297,6 +302,27 @@ mod tests {
             .await
             .expect("request");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rank_with_a_query_orders_by_query_similarity_at_cold_start() {
+        // No feedback: the query is the only signal, so rank orders by similarity
+        // to it (the embedder maps any query to the "engineering" direction).
+        let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
+            1.0, 0.0, 0.0, 0.0,
+        ]));
+        let response = router(store_at("rank_fixture.parquet"), None, Some(embed))
+            .oneshot(post_json(
+                "/api/rank",
+                serde_json::json!({ "query": "backend engineering" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert_eq!(rows[0]["id"], "city-direct");
     }
 
     #[tokio::test]
