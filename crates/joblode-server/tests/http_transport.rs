@@ -60,7 +60,11 @@ async fn http_transport_serves_the_mcp_handshake_and_search() {
         .expect("spawn joblode-server");
     let _guard = ServerGuard(child);
 
-    let client = reqwest::Client::new();
+    // A per-request timeout so a bound-but-stalled server can't hang CI.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build reqwest client");
     let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"itest","version":"0"}}}"#;
 
     // Poll until the server has bound and answers `initialize` (parquet load is fast).
@@ -124,14 +128,24 @@ async fn http_transport_serves_the_mcp_handshake_and_search() {
 
 #[test]
 fn rejects_an_unknown_transport() {
-    let status = Command::new(env!("CARGO_BIN_EXE_joblode-server"))
+    // The transport is validated before the dataset is touched (see main.rs), so
+    // no JOBLODE_PARQUET is needed; assert it fails for that specific reason.
+    let output = Command::new(env!("CARGO_BIN_EXE_joblode-server"))
         .arg("carrier-pigeon")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .expect("run joblode-server");
 
-    assert!(!status.success(), "unknown transport should exit non-zero");
+    assert!(
+        !output.status.success(),
+        "unknown transport should exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown transport"),
+        "expected an unknown-transport error, got: {stderr}"
+    );
 }
 
 #[test]
