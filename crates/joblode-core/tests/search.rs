@@ -299,6 +299,20 @@ fn store_with_sidecar(tag: &str) -> JobStore {
 }
 
 #[test]
+fn count_reports_the_deduplicated_filter_match_total() {
+    let store = JobStore::open(fixture()).expect("fixture should open");
+
+    // Three SF roles match (same as `search`'s total) — independent of any limit.
+    let total = store
+        .count(&Criteria {
+            cities: vec!["san francisco".into()],
+            ..Criteria::default()
+        })
+        .expect("count should succeed");
+    assert_eq!(total, 3);
+}
+
+#[test]
 fn candidate_ids_returns_deduplicated_matches_in_id_order() {
     let store = JobStore::open(fixture()).expect("fixture should open");
 

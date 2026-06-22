@@ -79,11 +79,13 @@ pub async fn run(
     );
 
     let query_started = Instant::now();
-    let hits = tokio::task::spawn_blocking(move || {
-        store
-            .lock()
-            .expect("store mutex poisoned")
-            .semantic_search(&vector, &criteria, limit)
+    // `total` is the size of the hard-filtered set (the query only ranks within it),
+    // so the caller knows how many roles match even though `limit` caps the rows.
+    let (hits, total) = tokio::task::spawn_blocking(move || {
+        let store = store.lock().expect("store mutex poisoned");
+        let total = store.count(&criteria)?;
+        let hits = store.semantic_search(&vector, &criteria, limit)?;
+        anyhow::Ok((hits, total))
     })
     .await
     .map_err(|error| RankError::Internal(format!("search task failed: {error}")))?
@@ -102,10 +104,10 @@ pub async fn run(
         query_ms,
         filtered,
         limit,
+        total,
         hits = results.len(),
         "search"
     );
 
-    let total = results.len();
     Ok(SearchResults { total, results })
 }

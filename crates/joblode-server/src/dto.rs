@@ -140,11 +140,11 @@ pub struct SearchHit {
 
 /// `search` result: the match count plus a capped page of rows. With a semantic
 /// `query`, rows are ordered by similarity and carry a `score`; otherwise it's a
-/// plain filter page and `total` is the full match count.
+/// plain filter page. Either way the hard filters define the set.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SearchResults {
-    /// Matching roles (the full count for a filter search; the returned count for a
-    /// semantic query).
+    /// Total roles matching the hard filters — the candidate-set size, independent
+    /// of `limit` and of any semantic ranking (the `query` ranks within this set).
     pub total: usize,
     /// Compact rows, capped at `limit`. Call `get_job` for the full description.
     pub results: Vec<SearchHit>,

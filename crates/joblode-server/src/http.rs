@@ -294,6 +294,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_with_a_query_reports_the_filter_total_not_the_returned_count() {
+        // The query ranks within the hard-filtered set; `total` is that set's size,
+        // not the (limit-capped) number of rows returned.
+        let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
+            1.0, 0.0, 0.0, 0.0,
+        ]));
+        let response = semantic_app(Some(embed))
+            .oneshot(post_search(
+                serde_json::json!({ "query": "backend engineering", "limit": 1 }),
+            ))
+            .await
+            .expect("request");
+
+        let data = body_json(response).await;
+        assert_eq!(data["results"].as_array().expect("results").len(), 1);
+        // The rank fixture has more than one role, so total exceeds the one row.
+        assert!(data["total"].as_u64().unwrap() > 1);
+    }
+
+    #[tokio::test]
     async fn search_with_a_query_400s_without_an_embedder() {
         let response = semantic_app(None)
             .oneshot(post_search(

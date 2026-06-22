@@ -381,6 +381,43 @@ impl JobStore {
         Ok(out)
     }
 
+    /// Counts the deduplicated roles matching `criteria` — the size of the candidate
+    /// set the hard filters define, independent of any ranking or row cap. Used to
+    /// report `total` for a semantic search (the filters constrain; the query only
+    /// ranks within them).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying query fails.
+    pub fn count(&self, criteria: &Criteria) -> Result<usize> {
+        let mut parameters = vec![Value::Text(self.parquet.clone())];
+        let filters = collect_filters(criteria, &mut parameters);
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            WITH filtered AS (
+                SELECT row_number() OVER (
+                    PARTITION BY
+                        lower(coalesce(nullif(company_name, ''), company, '')),
+                        lower(coalesce(title, ''))
+                    ORDER BY cast(id AS VARCHAR)
+                ) AS duplicate_rank
+                FROM read_parquet(?)
+                {where_clause}
+            )
+            SELECT count(*) FROM filtered WHERE duplicate_rank = 1
+            "#
+        );
+        let total: i64 = self
+            .connection
+            .query_row(&sql, params_from_iter(parameters), |row| row.get(0))?;
+        Ok(usize::try_from(total).unwrap_or(0))
+    }
+
     /// Returns up to `limit` deduplicated candidate ids matching `criteria`, ordered
     /// by id. A lightweight id-only projection for the fast (feedback-only) rank
     /// path — it draws the whole matching set to rank without reading the wide row
