@@ -1,5 +1,5 @@
 [package]
-name = "jobscout-core"
+name = "joblode-core"
 description = "Search, retrieval, and ranking over the open-jobs dataset."
 version.workspace = true
 edition.workspace = true

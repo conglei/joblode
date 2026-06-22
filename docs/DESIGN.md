@@ -34,7 +34,7 @@ backend. See §9 for that boundary and why it matters (LinkedIn ToS / auth).
 - **Token economics first.** Push high-volume, low-judgment work (filtering, embedding/pairwise ranking)
   to the *local* server and *cheap* models. Reserve the expensive cloud model for conversation and
   orchestration. Every tool result is shaped to minimize what Claude must read.
-- **One core, many faces.** Search/rank logic lives in one Rust crate (`jobscout-core`); the MCP tools, the
+- **One core, many faces.** Search/rank logic lives in one Rust crate (`joblode-core`); the MCP tools, the
   REST/SSE API, and (later) a CLI are thin adapters over it. Define behavior once, expose it three ways.
 - **MCP-native, with graceful fallback.** Tools return structured JSON *and* an MCP-UI resource. If a
   client doesn't render MCP-UI, the JSON still works.
@@ -51,7 +51,7 @@ backend. See §9 for that boundary and why it matters (LinkedIn ToS / auth).
 | Columnar query + pushdown over the parquet | **DuckDB via the `duckdb` crate** (SQL + httpfs for remote R2); **DataFusion** is the pure-Rust alt — see §5 |
 | Web server (REST + SSE + `/mcp`) | **axum** (tokio-native; first-class SSE; tower middleware) |
 | MCP server SDK | **`rmcp`** (official Rust SDK; streamable-HTTP transport mounts into axum as a tower Service, plus stdio) |
-| Shared logic | **`jobscout-core` crate** (search / get / rank), reused by the web + MCP adapters |
+| Shared logic | **`joblode-core` crate** (search / get / rank), reused by the web + MCP adapters |
 | Async runtime | **tokio** (DataFusion/axum/rmcp are all tokio-native) |
 
 ---
@@ -72,7 +72,7 @@ backend. See §9 for that boundary and why it matters (LinkedIn ToS / auth).
          │  └────┬─────┘   └────┬─────┘   └────────┬─────────┘    │
          │       └───────────┬──┴──────────────────┘              │
          │            ┌──────▼───────┐   ┌──────────────┐         │
-         │            │  jobscout-core    │   │  jobscout-rank   │         │
+         │            │  joblode-core    │   │  joblode-rank   │         │
          │            │  search/get   │   │ Gemini (opt) │         │
          │            └──────┬───────┘   └──────┬───────┘         │
          │             ┌─────▼─────┐            │                 │
@@ -237,7 +237,7 @@ reaches parity.
 - **Phase 0 — Monorepo skeleton.** flox toolchains (rust, node, duckdb), Cargo workspace, pnpm workspace,
   Turbo pipeline, CI (build+lint+test). *Tests:* `turbo test` green on empty stubs (`cargo test`,
   `vitest`); `turbo build` builds everything; `cargo clippy`/`fmt` clean.
-- **Phase 1 — `jobscout-core` crate over DuckDB.** `search(Criteria) -> (Vec<Job>, usize)`,
+- **Phase 1 — `joblode-core` crate over DuckDB.** `search(Criteria) -> (Vec<Job>, usize)`,
   `get_job(id) -> Result<Job>`. *Tests:* `#[test]` table cases over the fixture — city/function/level
   filters, US-remote-scope special case, comp-floor sentinel handling, `(company,title)` dedup, empty
   results. This is the spec; write it first.
@@ -245,7 +245,7 @@ reaches parity.
   invoke tools through an in-process transport; assert result schema and that `get_job` returns the JD.
 - **Phase 3 — REST + SSE + React.** axum `/api/search`, `/api/job/:id`, serves the React build. *Tests:*
   axum handler tests (`tower::ServiceExt::oneshot`); one Playwright smoke (search → rows → open drawer).
-- **Phase 4 — ranking (config-gated).** `jobscout-rank` match + pairwise; `rank_jobs` tool; `rank` param on
+- **Phase 4 — ranking (config-gated).** `joblode-rank` match + pairwise; `rank_jobs` tool; `rank` param on
   search; SSE streaming for the web UI. *Tests:* mock the model client (trait + fake impl); assert (a)
   pairwise recovers a planted order, (b) ranking disabled cleanly when no key, (c) token-shaped compact
   output.
@@ -280,7 +280,7 @@ reaches parity.
 ## 10. Proposed repo layout
 
 ```
-jobscout/
+joblode/
   .flox/                      # dev env: rust, node, pnpm, duckdb, cargo-deny, cargo-llvm-cov
   .github/                    # CI, CodeQL, Scorecard, dependabot, CODEOWNERS, issue/PR templates
   CLAUDE.md                   # lean agent guide (points here for architecture)
@@ -291,9 +291,9 @@ jobscout/
   turbo.json                  # JS task graph + cache
   docs/DESIGN.md              # this file
   crates/
-    jobscout-core/            # search / get / rank logic over DuckDB  (lib; tests inline + tests/)
-    jobscout-server/          # axum: REST + SSE + rmcp (stdio & HTTP) + ui:// resource  (bin)
-    jobscout-mcp/             # optional stdio-only MCP bin (same jobscout-core)  [added when needed]
+    joblode-core/            # search / get / rank logic over DuckDB  (lib; tests inline + tests/)
+    joblode-server/          # axum: REST + SSE + rmcp (stdio & HTTP) + ui:// resource  (bin)
+    joblode-mcp/             # optional stdio-only MCP bin (same joblode-core)  [added when needed]
     testdata/fixture.parquet
   web/                        # React (Vite, TS) — one build: web UI + MCP App ui:// resource
 ```

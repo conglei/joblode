@@ -1,4 +1,4 @@
-//! `jobscout-core` — search, retrieval, and ranking over the open-jobs dataset.
+//! `joblode-core` — search, retrieval, and ranking over the open-jobs dataset.
 //!
 //! Phase 0 is a skeleton: it establishes the crate and the test harness only.
 //! Phase 1 introduces the DuckDB-backed [`search`] API and its query types; see

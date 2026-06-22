@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Behavioral guidelines to reduce common LLM coding mistakes, plus jobscout-specific context. Keep this file
+Behavioral guidelines to reduce common LLM coding mistakes, plus joblode-specific context. Keep this file
 **lean** — it loads into every session. Architecture, decisions, and the phased plan live in
 [docs/DESIGN.md](docs/DESIGN.md); read it before non-trivial work, and don't duplicate it here.
 
@@ -71,14 +71,14 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## The project
 
-**jobscout** — an MCP-native job-search service over the open-jobs dataset (~1M live roles). A Rust backend
+**joblode** — an MCP-native job-search service over the open-jobs dataset (~1M live roles). A Rust backend
 (DuckDB + axum + `rmcp`) and a React/TS frontend, designed to be driven by an agent. Two languages only;
 **there is no Python in this repo.**
 
 Map:
 
-- `crates/jobscout-core` — search / get / rank logic over DuckDB. Most behavior lives here.
-- `crates/jobscout-server` — axum: REST + SSE + MCP (stdio & HTTP) + the MCP App `ui://` resource.
+- `crates/joblode-core` — search / get / rank logic over DuckDB. Most behavior lives here.
+- `crates/joblode-server` — axum: REST + SSE + MCP (stdio & HTTP) + the MCP App `ui://` resource.
 - `web/` — React (Vite, TS): the web UI and the MCP App resource, from one build.
 - `docs/DESIGN.md` — source of truth for architecture and the phase plan.
 
@@ -122,4 +122,4 @@ CI gates on all of the above (plus coverage). Run them before pushing.
 
 Turbo writes one rolling log per task per package at `<package>/.turbo/turbo-<task>.log` (e.g.
 `web/.turbo/turbo-dev.log` for the Vite dev server) — read these directly when the web app misbehaves.
-For the Rust server, read its stdout/stderr or run `cargo run -p jobscout-server`.
+For the Rust server, read its stdout/stderr or run `cargo run -p joblode-server`.
