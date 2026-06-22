@@ -1,0 +1,19 @@
+# Codecov configuration. Without this file, Codecov's default project check
+# tolerates a 0% drop, which is brittle for a young workspace. We keep coverage
+# honest but allow small dips from untestable bootstrap/glue lines.
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        # Allow a small decrease so unavoidable bootstrap lines (e.g. serve_stdio,
+        # graceful-shutdown signal handling) don't fail an otherwise well-tested PR.
+        threshold: 2%
+    patch:
+      default:
+        # New/changed lines in a PR should be well covered.
+        target: 80%
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true
