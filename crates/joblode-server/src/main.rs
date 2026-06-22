@@ -1,13 +1,16 @@
 //! joblode-server — serves the joblode MCP tools over stdio (local clients like
-//! Claude Desktop/Code) and streamable HTTP (mounted at `/mcp`).
+//! Claude Desktop/Code) and, over HTTP, the MCP transport (`/mcp`), the REST API
+//! (`/api`), and the React build (static, with an SPA fallback).
 //!
-//! Phase 2: MCP `search_jobs` + `get_job` only. The REST/SSE API and the MCP App
-//! `ui://` resource arrive in later phases; see `docs/DESIGN.md`.
+//! The MCP App `ui://` resource arrives in Phase 5; see `docs/DESIGN.md`.
 //!
 //! Usage: `joblode-server [stdio|http]` (default `stdio`). The parquet path comes
-//! from `JOBLODE_PARQUET` (default `open-jobs.parquet`) and, for HTTP, the bind
-//! address from `JOBLODE_HTTP_ADDR` (default `127.0.0.1:8000`).
+//! from `JOBLODE_PARQUET` (default `open-jobs.parquet`); for HTTP, the bind address
+//! from `JOBLODE_HTTP_ADDR` (default `127.0.0.1:8000`) and the web build directory
+//! from `JOBLODE_WEB_DIR` (default `web/dist`).
 
+mod dto;
+mod http;
 mod mcp;
 
 use std::sync::{Arc, Mutex};
@@ -63,17 +66,31 @@ async fn serve_http(store: Arc<Mutex<JobStore>>) -> Result<()> {
     }
     let cancellation = tokio_util::sync::CancellationToken::new();
 
+    // The MCP service closure takes ownership of `store`; the REST router needs its
+    // own handle to the same shared store.
+    let api_store = store.clone();
     let service = StreamableHttpService::new(
         move || Ok(JobServer::new(store.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
     );
 
-    let router = axum::Router::new().nest_service("/mcp", service);
+    // The React build (web UI + the future MCP App ui:// resource); a missing dir
+    // simply 404s, so the API still runs before the frontend is built. Unknown
+    // paths fall back to index.html for client-side routing.
+    let web_dir = std::env::var("JOBLODE_WEB_DIR").unwrap_or_else(|_| "web/dist".into());
+    let serve_web = tower_http::services::ServeDir::new(&web_dir).fallback(
+        tower_http::services::ServeFile::new(format!("{web_dir}/index.html")),
+    );
+
+    let router = axum::Router::new()
+        .nest_service("/mcp", service)
+        .merge(http::router(api_store))
+        .fallback_service(serve_web);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind {addr}"))?;
-    eprintln!("joblode-server MCP on http://{addr}/mcp");
+    eprintln!("joblode-server on http://{addr} (REST /api, MCP /mcp)");
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {

@@ -1,6 +1,6 @@
 # Design: open-jobs as an MCP-native, agent-orchestrated job search
 
-Status: **implementation in progress — Phases 0–2 complete** · Owner: Conglei · Last updated: 2026-06-21
+Status: **implementation in progress — Phases 0–3 complete** · Owner: Conglei · Last updated: 2026-06-21
 
 This document is the architecture and phased implementation plan. Resolved decisions are recorded in
 §11; completed phases are marked in §8.
@@ -254,8 +254,18 @@ reaches parity.
   transport; `JOBLODE_PARQUET` / `JOBLODE_HTTP_ADDR` configure it. *Tests:* 5 in-process cases over a
   `tokio::io::duplex` client assert tool discovery, the search total/row-cap and compact shape, that
   `get_job` returns the JD, and that a missing id errors.
-- **Phase 3 — REST + SSE + React.** axum `/api/search`, `/api/job/:id`, serves the React build. *Tests:*
-  axum handler tests (`tower::ServiceExt::oneshot`); one Playwright smoke (search → rows → open drawer).
+- **Phase 3 — REST + React — complete.** axum `POST /api/search` + `GET /api/job/{id}` over the shared
+  `JobStore`, reusing the Phase-2 wire types (now extracted to `dto.rs`, used by both the MCP and REST
+  faces). The binary serves the React build from `JOBLODE_WEB_DIR` (default `web/dist`) with an
+  index.html SPA fallback, mounted alongside `/mcp`. The frontend is React + **Mantine** (the chosen
+  design system — `AppShell` sidebar, results `Table`, detail `Drawer`; `react-markdown` for the JD),
+  talking to the REST API through a thin `api.ts` adapter (the MCP App bridge adapter lands in Phase 5).
+  *Tests:* axum handler tests (`tower::ServiceExt::oneshot`) for the search total/row-cap/compact shape,
+  `get_job` 200/404; a React Testing Library smoke (search → rows → open drawer) over a mocked adapter.
+  *Deviations from the original plan:* **SSE was deferred to Phase 4**, where streaming earns its place
+  with ranking progress — streaming a single sub-second search query adds no value. The browser smoke is
+  **React Testing Library + jsdom** rather than Playwright, to avoid shipping browser binaries into CI for
+  one flow; a real Playwright pass can be added when the UI grows.
 - **Phase 4 — ranking (config-gated).** `joblode-rank` match + pairwise; `rank_jobs` tool; `rank` param on
   search; SSE streaming for the web UI. *Tests:* mock the model client (trait + fake impl); assert (a)
   pairwise recovers a planted order, (b) ranking disabled cleanly when no key, (c) token-shaped compact

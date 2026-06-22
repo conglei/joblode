@@ -32,6 +32,8 @@ tokio = { version = "1", features = [
 ] }
 tokio-util = "0.7"
 axum = "0.8"
+# Static serving for the bundled React build (web/dist) with an SPA fallback.
+tower-http = { version = "0.6", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -41,3 +43,5 @@ anyhow = "1"
 reqwest = { version = "0.12", default-features = false }
 # SIGINT the spawned server so it shuts down gracefully (and flushes coverage).
 libc = "0.2"
+# `oneshot` the API router in handler tests without binding a socket.
+tower = { version = "0.5", features = ["util"] }
