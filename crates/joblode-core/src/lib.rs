@@ -296,8 +296,10 @@ impl JobStore {
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(", ");
+        // coalesce: rows with a NULL `jd_embedding` come back as "" (→ empty vec),
+        // never as a NULL that would fail the string conversion.
         let sql = format!(
-            "SELECT cast(id AS VARCHAR), array_to_string(jd_embedding, ',') \
+            "SELECT cast(id AS VARCHAR), coalesce(array_to_string(jd_embedding, ','), '') \
              FROM read_parquet(?) \
              WHERE cast(id AS VARCHAR) IN ({placeholders})"
         );

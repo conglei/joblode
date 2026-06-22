@@ -212,3 +212,13 @@ fn embeddings_of_no_ids_is_empty() {
     let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
     assert!(store.embeddings(&[]).expect("ok").is_empty());
 }
+
+#[test]
+fn a_null_embedding_comes_back_empty_not_an_error() {
+    // The live dataset has rows with a NULL jd_embedding; that must not error.
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+
+    let map = store.embeddings(&["comp-low"]).expect("embeddings query");
+
+    assert_eq!(map["comp-low"], Vec::<f32>::new());
+}
