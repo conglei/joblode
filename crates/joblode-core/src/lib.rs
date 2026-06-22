@@ -17,6 +17,10 @@ pub struct Criteria {
     pub functions: Vec<String>,
     /// Accepted seniority levels.
     pub levels: Vec<String>,
+    /// Title terms matched as case-insensitive substrings.
+    pub titles: Vec<String>,
+    /// Company terms matched across canonical and raw company names.
+    pub companies: Vec<String>,
     /// City terms matched across city, region, and raw location.
     pub cities: Vec<String>,
     /// Required ISO alpha-2 country code.
@@ -105,6 +109,18 @@ impl JobStore {
             &mut parameters,
             "coalesce(level, '')",
             &criteria.levels,
+        );
+        add_substring_filter(
+            &mut filters,
+            &mut parameters,
+            "coalesce(title, '')",
+            &criteria.titles,
+        );
+        add_substring_filter(
+            &mut filters,
+            &mut parameters,
+            "concat_ws(' ', company_name, company)",
+            &criteria.companies,
         );
 
         if let Some(country) = criteria.country.as_deref() {
@@ -247,6 +263,26 @@ fn add_exact_filter(
             .join(", ")
     ));
     parameters.extend(values.iter().cloned().map(Value::Text));
+}
+
+fn add_substring_filter(
+    filters: &mut Vec<String>,
+    parameters: &mut Vec<Value>,
+    expression: &str,
+    values: &[String],
+) {
+    if values.is_empty() {
+        return;
+    }
+
+    let value_filters = values
+        .iter()
+        .map(|value| {
+            parameters.push(Value::Text(value.to_lowercase()));
+            format!("contains(lower({expression}), ?)")
+        })
+        .collect::<Vec<_>>();
+    filters.push(format!("({})", value_filters.join(" OR ")));
 }
 
 fn job_from_row(row: &Row<'_>) -> Result<Job> {

@@ -46,6 +46,40 @@ fn filters_level() {
 }
 
 #[test]
+fn filters_title_by_case_insensitive_substring() {
+    let (ids, total) = search(Criteria {
+        titles: vec!["BACKEND".into(), "product manager".into()],
+        ..Criteria::default()
+    });
+
+    assert_eq!(ids, ["city-direct", "city-region"]);
+    assert_eq!(total, 2);
+}
+
+#[test]
+fn filters_company_across_canonical_and_raw_names() {
+    let (ids, total) = search(Criteria {
+        companies: vec!["remoteco".into(), "staffing feed".into()],
+        ..Criteria::default()
+    });
+
+    assert_eq!(ids, ["dedup-first", "us-scope"]);
+    assert_eq!(total, 2);
+}
+
+#[test]
+fn combines_title_and_company_filters() {
+    let (ids, total) = search(Criteria {
+        titles: vec!["engineer".into()],
+        companies: vec!["datahigh".into()],
+        ..Criteria::default()
+    });
+
+    assert_eq!(ids, ["comp-high"]);
+    assert_eq!(total, 1);
+}
+
+#[test]
 fn treats_us_remote_scopes_as_us_jobs() {
     let (ids, total) = search(Criteria {
         country: Some("US".into()),
