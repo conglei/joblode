@@ -13,6 +13,8 @@ export interface SearchParams {
   min_comp?: number | null;
   /** Free-text description of the work — orders results by JD similarity when set. */
   query?: string;
+  /** Freshness window: only roles posted within the last N days (excludes undated). */
+  posted_within_days?: number;
   limit?: number;
 }
 

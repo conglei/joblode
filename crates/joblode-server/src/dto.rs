@@ -43,6 +43,10 @@ pub struct SearchParams {
     /// titles), under the same hard filters. Needs a configured embeddings model.
     #[serde(default)]
     pub query: Option<String>,
+    /// Freshness window: only roles posted within the last N days (e.g. 14 for the
+    /// past two weeks). Roles with an unknown post date are excluded when set.
+    #[serde(default)]
+    pub posted_within_days: Option<u32>,
     /// Max rows to return (default 50). Does not affect `total`.
     #[serde(default)]
     pub limit: Option<usize>,
@@ -67,7 +71,8 @@ impl SearchParams {
         self.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT)
     }
 
-    /// Projects the filter fields onto [`Criteria`] (drops `limit`).
+    /// Projects the filter fields onto [`Criteria`] (drops `limit`). Resolves the
+    /// relative `posted_within_days` window to an absolute `posted_after` threshold.
     #[must_use]
     pub fn criteria(&self) -> Criteria {
         Criteria {
@@ -78,6 +83,9 @@ impl SearchParams {
             cities: self.cities.clone(),
             country: self.country.clone(),
             min_comp: self.min_comp,
+            posted_after: self.posted_within_days.map(|days| {
+                (chrono::Utc::now() - chrono::Duration::days(i64::from(days))).to_rfc3339()
+            }),
         }
     }
 }

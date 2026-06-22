@@ -80,7 +80,7 @@ impl JobServer {
     }
 
     #[tool(
-        description = "EXPLORE (refine criteria). One search with two match modes: hard filters (function, level, title, company, city, country, min comp) for keyword/structured match, AND an optional `query` for semantic match against the job description. Use it to surface a page of matches for you and the user to react to, then adjust the filters/query and search again until the criteria are right — then hand off to rank_jobs to order the whole set. With a `query`, rows are ordered by similarity and carry a `score` (needs an embeddings key); without one it's a plain filter page. Call get_job for a role's full description."
+        description = "EXPLORE (refine criteria). One search with two match modes: hard filters (function, level, title, company, city, country, min comp, and posted_within_days for a freshness window — e.g. 14 for the past two weeks) for keyword/structured match, AND an optional `query` for semantic match against the job description. Use it to surface a page of matches for you and the user to react to, then adjust the filters/query and search again until the criteria are right — then hand off to rank_jobs to order the whole set. With a `query`, rows are ordered by similarity and carry a `score` (needs an embeddings key); without one it's a plain filter page. Call get_job for a role's full description."
     )]
     async fn search(
         &self,

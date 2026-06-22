@@ -299,6 +299,19 @@ fn store_with_sidecar(tag: &str) -> JobStore {
 }
 
 #[test]
+fn filters_by_posted_after_excluding_older_and_undated() {
+    // In the fixture, city-direct is posted 2026-06-20; the other SF roles 2025-06-01.
+    let (ids, total) = search(Criteria {
+        cities: vec!["san francisco".into()],
+        posted_after: Some("2026-01-01T00:00:00+00:00".into()),
+        ..Criteria::default()
+    });
+
+    assert_eq!(ids, ["city-direct"]);
+    assert_eq!(total, 1);
+}
+
+#[test]
 fn count_reports_the_deduplicated_filter_match_total() {
     let store = JobStore::open(fixture()).expect("fixture should open");
 

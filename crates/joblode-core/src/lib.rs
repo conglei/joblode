@@ -28,6 +28,9 @@ pub struct Criteria {
     pub country: Option<String>,
     /// Annual compensation floor in thousands.
     pub min_comp: Option<f64>,
+    /// Only roles posted on or after this RFC3339 timestamp (a freshness window).
+    /// Roles with a missing or unparseable `posted_at` are excluded when set.
+    pub posted_after: Option<String>,
 }
 
 impl Criteria {
@@ -42,6 +45,7 @@ impl Criteria {
             && self.cities.is_empty()
             && self.country.is_none()
             && self.min_comp.is_none()
+            && self.posted_after.is_none()
     }
 }
 
@@ -709,6 +713,19 @@ fn collect_filters(criteria: &Criteria, parameters: &mut Vec<Value>) -> Vec<Stri
     if let Some(min_comp) = criteria.min_comp {
         filters.push("(coalesce(salary_max_k, -1) = -1 OR salary_max_k >= ?)".to_owned());
         parameters.push(Value::Double(min_comp));
+    }
+
+    // Freshness window: only roles posted on or after the threshold. `try_cast`
+    // tolerates the varied/empty `posted_at` strings — an unparseable date yields
+    // NULL, which fails the comparison, so undated roles are excluded (as intended
+    // for "posted in the last N days").
+    if let Some(after) = criteria
+        .posted_after
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        filters.push("try_cast(posted_at AS TIMESTAMPTZ) >= try_cast(? AS TIMESTAMPTZ)".to_owned());
+        parameters.push(Value::Text(after.to_owned()));
     }
 
     filters
