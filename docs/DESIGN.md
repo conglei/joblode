@@ -243,9 +243,10 @@ reaches parity.
 - **Phase 1 — `joblode-core` crate over DuckDB — complete.** `JobStore::open(parquet)`,
   `search(&Criteria) -> Result<(Vec<Job>, usize)>`, and `get_job(id) -> Result<Job>`. The bundled
   DuckDB build includes the Parquet extension, so local searches require no runtime extension install.
-  *Tests:* 11 integration cases over `testdata/fixture.parquet` cover city/function/level/title/company
-  filters, title+company composition, US-remote-scope matching, comp-floor sentinel handling,
-  case-insensitive `(company,title)` dedup, empty results, and full-JD retrieval.
+  *Tests:* 13 integration cases over `testdata/fixture.parquet` cover city/function/level/title/company
+  filters, multi-value criteria, title+company composition, US-remote-scope matching, comp-floor
+  sentinel handling, case-insensitive `(company,title)` dedup, empty results, missing IDs, and full-JD
+  retrieval.
 - **Phase 2 — MCP server (`rmcp`).** `search_jobs` + `get_job` tools (JSON only), stdio + HTTP. *Tests:*
   invoke tools through an in-process transport; assert result schema and that `get_job` returns the JD.
 - **Phase 3 — REST + SSE + React.** axum `/api/search`, `/api/job/:id`, serves the React build. *Tests:*
