@@ -54,6 +54,31 @@ pub async fn run(
     params: RankParams,
 ) -> Result<RankResults, RankError> {
     let method = parse_method(params.method.as_deref())?;
+
+    // Validate model-method preconditions up front, so any later failure from the
+    // rank call is unambiguously internal (no error-string sniffing).
+    if matches!(method, Method::Match | Method::Pairwise) {
+        let name = if method == Method::Match {
+            "match"
+        } else {
+            "pairwise"
+        };
+        if model.is_none() {
+            return Err(RankError::BadRequest(format!(
+                "ranking method '{name}' requires a configured model; none is set"
+            )));
+        }
+        let has_resume = params
+            .resume
+            .as_deref()
+            .is_some_and(|resume| !resume.trim().is_empty());
+        if !has_resume {
+            return Err(RankError::BadRequest(format!(
+                "ranking method '{name}' requires a resume"
+            )));
+        }
+    }
+
     let top = params.top.unwrap_or(RANK_TOP);
     let refine_k = match method {
         Method::Pairwise => REFINE_PAIRWISE,
@@ -91,17 +116,10 @@ pub async fn run(
         refine_k,
     };
 
+    // Preconditions were checked above, so any failure here is internal.
     let results = joblode_rank::rank(model.as_deref(), request)
         .await
-        .map_err(|error| {
-            let message = error.to_string();
-            // "requires …" = a config/caller problem; anything else is internal.
-            if message.contains("requires") {
-                RankError::BadRequest(message)
-            } else {
-                RankError::Internal(message)
-            }
-        })?;
+        .map_err(|error| RankError::Internal(error.to_string()))?;
 
     Ok(RankResults { results })
 }
@@ -131,7 +149,11 @@ fn prepare_candidates(
         store.search(criteria, candidate_limit)?.0
     } else {
         let mut found = Vec::with_capacity(ids.len());
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
         for id in ids {
+            if !seen.insert(id.as_str()) {
+                continue; // skip duplicate ids, keeping first-seen order
+            }
             if let Some(job) = store.get_job(id)? {
                 found.push(job);
             }
