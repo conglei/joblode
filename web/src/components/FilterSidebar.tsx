@@ -26,7 +26,8 @@ function buildParams(state: {
   if (state.cities.length) params.cities = state.cities;
   if (state.functions.length) params.functions = state.functions;
   if (state.levels.length) params.levels = state.levels;
-  const country = state.country.trim();
+  // Canonical ISO-2 (the server already matches case-insensitively).
+  const country = state.country.trim().toUpperCase();
   if (country) params.country = country;
   if (typeof state.minComp === "number") params.min_comp = state.minComp;
   return params;

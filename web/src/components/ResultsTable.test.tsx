@@ -51,6 +51,16 @@ describe("ResultsTable", () => {
     expect(onSelect).toHaveBeenCalledWith("with-comp");
   });
 
+  it("selects a focused row on Enter", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderTable(onSelect);
+
+    screen.getByText("Backend Engineer").closest("tr")?.focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith("with-comp");
+  });
+
   it("renders an em dash for unknown comp", () => {
     renderTable(vi.fn());
     expect(screen.getByText("—")).toBeInTheDocument();

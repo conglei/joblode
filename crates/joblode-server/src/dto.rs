@@ -9,8 +9,12 @@ use serde::{Deserialize, Serialize};
 /// Default cap on returned rows. `total` always reflects the full match count.
 pub const DEFAULT_LIMIT: usize = 50;
 
+/// Hard ceiling on returned rows, so a client can't request an unbounded page
+/// (which would inflate query work and response size). `total` is unaffected.
+pub const MAX_LIMIT: usize = 500;
+
 /// Hard search filters plus a row cap, mirroring [`Criteria`] on the wire.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 pub struct SearchParams {
     /// Accepted job functions (exact match).
     #[serde(default)]
@@ -39,6 +43,13 @@ pub struct SearchParams {
 }
 
 impl SearchParams {
+    /// The row cap to apply: the requested `limit` (or [`DEFAULT_LIMIT`]),
+    /// clamped to [`MAX_LIMIT`] so a client can't force an unbounded page.
+    #[must_use]
+    pub fn effective_limit(&self) -> usize {
+        self.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT)
+    }
+
     /// Projects the filter fields onto [`Criteria`] (drops `limit`).
     #[must_use]
     pub fn criteria(&self) -> Criteria {
@@ -106,4 +117,21 @@ pub struct SearchResults {
     pub total: usize,
     /// Compact rows, capped at `limit`. Call `get_job` for the full description.
     pub results: Vec<JobSummary>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_limit_defaults_then_clamps() {
+        let mut params = SearchParams::default();
+        assert_eq!(params.effective_limit(), DEFAULT_LIMIT);
+
+        params.limit = Some(10);
+        assert_eq!(params.effective_limit(), 10);
+
+        params.limit = Some(MAX_LIMIT * 100);
+        assert_eq!(params.effective_limit(), MAX_LIMIT);
+    }
 }

@@ -12,7 +12,7 @@ use axum::{
 };
 use joblode_core::{Job, JobStore};
 
-use crate::dto::{JobSummary, SearchParams, SearchResults, DEFAULT_LIMIT};
+use crate::dto::{JobSummary, SearchParams, SearchResults};
 
 /// Shared, read-only state for the API handlers.
 #[derive(Clone)]
@@ -35,7 +35,7 @@ async fn search(
     Json(params): Json<SearchParams>,
 ) -> Result<Json<SearchResults>, (StatusCode, String)> {
     let criteria = params.criteria();
-    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+    let limit = params.effective_limit();
     let store = state.store.clone();
 
     let (jobs, total) = tokio::task::spawn_blocking(move || {
@@ -45,8 +45,8 @@ async fn search(
             .search(&criteria, limit)
     })
     .await
-    .map_err(|error| internal(format!("search task failed: {error}")))?
-    .map_err(|error| internal(format!("search failed: {error}")))?;
+    .map_err(|error| internal("search task", error))?
+    .map_err(|error| internal("search", error))?;
 
     let results = jobs.iter().map(JobSummary::from).collect();
     Ok(Json(SearchResults { total, results }))
@@ -63,15 +63,21 @@ async fn job(
         store.lock().expect("store mutex poisoned").get_job(&id)
     })
     .await
-    .map_err(|error| internal(format!("get_job task failed: {error}")))?
-    .map_err(|error| internal(format!("get_job failed: {error}")))?
+    .map_err(|error| internal("get_job task", error))?
+    .map_err(|error| internal("get_job", error))?
     .ok_or((StatusCode::NOT_FOUND, "no job with that id".to_string()))?;
 
     Ok(Json(job))
 }
 
-fn internal(message: String) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, message)
+/// Logs the real failure server-side and returns an opaque 500, so DuckDB/query
+/// internals never travel over the API surface.
+fn internal(context: &str, detail: impl std::fmt::Display) -> (StatusCode, String) {
+    eprintln!("joblode-server: {context} failed: {detail}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal server error".to_string(),
+    )
 }
 
 #[cfg(test)]

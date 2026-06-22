@@ -12,7 +12,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 
-use crate::dto::{JobSummary, SearchParams, SearchResults, DEFAULT_LIMIT};
+use crate::dto::{JobSummary, SearchParams, SearchResults};
 
 /// Identifies one role for [`JobServer::get_job`].
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -56,7 +56,7 @@ impl JobServer {
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<Json<SearchResults>, ErrorData> {
         let criteria = params.criteria();
-        let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+        let limit = params.effective_limit();
         let store = self.store.clone();
 
         let (jobs, total) = tokio::task::spawn_blocking(move || {

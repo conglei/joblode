@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   AppShell,
@@ -22,17 +22,23 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Guards against out-of-order responses: only the most recent search applies.
+  const latestSearchId = useRef(0);
 
   async function runSearch(params: SearchParams) {
+    const searchId = ++latestSearchId.current;
     setLoading(true);
     setError(null);
     try {
-      setResults(await searchJobs(params));
+      const next = await searchJobs(params);
+      if (searchId !== latestSearchId.current) return;
+      setResults(next);
     } catch (cause: unknown) {
+      if (searchId !== latestSearchId.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
       setResults(null);
     } finally {
-      setLoading(false);
+      if (searchId === latestSearchId.current) setLoading(false);
     }
   }
 

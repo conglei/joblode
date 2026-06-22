@@ -30,6 +30,13 @@ export function ResultsTable({ rows, onSelect }: ResultsTableProps) {
             <Table.Tr
               key={row.id}
               onClick={() => onSelect(row.id)}
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(row.id);
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <Table.Td>{row.title}</Table.Td>
