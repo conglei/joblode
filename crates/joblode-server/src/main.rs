@@ -34,6 +34,9 @@ use rmcp::transport::{
     },
 };
 use rmcp::ServiceExt;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tower_http::LatencyUnit;
+use tracing::Level;
 
 use crate::mcp::JobServer;
 
@@ -43,26 +46,104 @@ async fn main() -> Result<()> {
     // like GEMINI_API_KEY / OPENAI_API_KEY needn't be re-exported each run. Real
     // environment variables take precedence; a missing file is fine.
     let _ = dotenvy::dotenv();
+    init_tracing();
 
-    // Validate the transport before touching the dataset, so a bad invocation
+    // Validate the command before touching the dataset, so a bad invocation
     // fails fast with a clear message instead of a parquet error.
     let mode = std::env::args().nth(1).unwrap_or_else(|| "stdio".into());
-    if !matches!(mode.as_str(), "stdio" | "http") {
-        bail!("unknown transport '{mode}' (use 'stdio' or 'http')");
+    if !matches!(mode.as_str(), "stdio" | "http" | "build-sidecar") {
+        bail!("unknown command '{mode}' (use 'stdio', 'http', or 'build-sidecar')");
     }
 
     let parquet = std::env::var("JOBLODE_PARQUET").unwrap_or_else(|_| "open-jobs.parquet".into());
-    let store = Arc::new(Mutex::new(
-        JobStore::open(&parquet).with_context(|| format!("failed to open {parquet}"))?,
-    ));
+
+    // One-shot maintenance command: build the compact embedding sidecar and exit.
+    if mode == "build-sidecar" {
+        return build_sidecar(&parquet);
+    }
+
+    let mut store =
+        JobStore::open(&parquet).with_context(|| format!("failed to open {parquet}"))?;
+    attach_sidecar(&mut store, &parquet);
+    let store = Arc::new(Mutex::new(store));
     let model = build_model_client();
     let embed = build_embed_client();
+    tracing::info!(
+        transport = %mode,
+        parquet = %parquet,
+        ranking = model.is_some(),
+        embeddings = embed.is_some(),
+        "starting joblode-server"
+    );
 
     if mode == "stdio" {
         serve_stdio(store, model, embed).await
     } else {
         serve_http(store, model, embed).await
     }
+}
+
+/// Path of the embedding sidecar: `JOBLODE_EMBED_SIDECAR`, or `<parquet>.emb.parquet`.
+fn sidecar_path(parquet: &str) -> String {
+    std::env::var("JOBLODE_EMBED_SIDECAR").unwrap_or_else(|_| format!("{parquet}.emb.parquet"))
+}
+
+/// Builds the compact embedding sidecar (truncated `jd_embedding`) next to the
+/// dataset, for fast semantic search. Run once after each data refresh. Dimension
+/// from `JOBLODE_EMBED_DIM` (default 256).
+fn build_sidecar(parquet: &str) -> Result<()> {
+    let out = sidecar_path(parquet);
+    let target_dim = std::env::var("JOBLODE_EMBED_DIM")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(256);
+    let store = JobStore::open(parquet).with_context(|| format!("failed to open {parquet}"))?;
+    tracing::info!(parquet, out = %out, target_dim, "building embedding sidecar");
+    let dim = store
+        .build_embedding_sidecar(&out, target_dim)
+        .with_context(|| format!("failed to build sidecar at {out}"))?;
+    tracing::info!(out = %out, dim, "built embedding sidecar");
+    Ok(())
+}
+
+/// Attaches the sidecar to `store` if present, enabling the fast semantic path.
+/// A missing or unreadable sidecar is non-fatal — semantic search falls back to
+/// scanning the full embeddings (slow); we just warn how to build one.
+fn attach_sidecar(store: &mut JobStore, parquet: &str) {
+    let path = sidecar_path(parquet);
+    if !std::path::Path::new(&path).exists() {
+        tracing::warn!(
+            expected = %path,
+            "no embedding sidecar; semantic search will scan full embeddings (slow). \
+             Build one with: joblode-server build-sidecar"
+        );
+        return;
+    }
+    match store.attach_sidecar(&path) {
+        Ok(()) => {
+            tracing::info!(sidecar = %path, "attached embedding sidecar (fast semantic search)")
+        }
+        Err(error) => tracing::warn!(
+            sidecar = %path,
+            %error,
+            "failed to attach embedding sidecar; semantic search will use the slow path"
+        ),
+    }
+}
+
+/// Initialises the `tracing` subscriber. Events go to **stderr** — stdout carries
+/// the MCP stdio protocol, so logging there would corrupt it — and are filtered by
+/// `RUST_LOG`, defaulting to `info` with our crates at `debug`. Set e.g.
+/// `RUST_LOG=joblode_server=debug,tower_http=debug` for verbose request traces.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,joblode_server=debug,tower_http=info"));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .init();
 }
 
 /// Builds the query-embedding client for semantic search from env, or `None` when
@@ -154,14 +235,25 @@ async fn serve_http(
         tower_http::services::ServeFile::new(format!("{web_dir}/index.html")),
     );
 
+    // Log every HTTP request as a span (method + path) and its response with
+    // status + latency in ms — this is what surfaces, e.g., a slow /api/semantic.
+    let trace = TraceLayer::new_for_http()
+        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+        .on_response(
+            DefaultOnResponse::new()
+                .level(Level::INFO)
+                .latency_unit(LatencyUnit::Millis),
+        );
+
     let router = axum::Router::new()
         .nest_service("/mcp", service)
         .merge(http::router(api_store, api_model, api_embed))
-        .fallback_service(serve_web);
+        .fallback_service(serve_web)
+        .layer(trace);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("failed to bind {addr}"))?;
-    eprintln!("joblode-server on http://{addr} (REST /api, MCP /mcp)");
+    tracing::info!(%addr, "joblode-server listening (REST /api, MCP /mcp)");
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {

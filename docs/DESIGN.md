@@ -311,6 +311,14 @@ reaches parity.
   `text-embedding-3-small`, 1536-d) via a config-gated `EmbedClient`; exposed as the `semantic_search` MCP
   tool, `POST /api/semantic`, and a sidebar search box. (`list_cosine_similarity` rejects the parquet's
   nullable-element lists; the fixed-size `::FLOAT[1536]` array cast is required.)
+  - **Speedup — embedding sidecar (Matryoshka truncation).** Brute-force cosine over the full corpus is
+    CPU-bound (~5.8 min unfiltered on ~890k roles). `joblode-server build-sidecar` writes a compact
+    `id`+`FLOAT[256]` sidecar (`jd_embedding` truncated to its Matryoshka prefix; 758 MB vs 21 GB, ~42 s to
+    build). `JobStore::semantic_search` auto-uses it when attached — rank off the sidecar, fetch full rows for
+    the top-k — dropping the same query to **~2 s (~167×)**. Stays parquet-in-place (rebuild as part of the
+    daily refresh; no index/DB). Trade-off: jd-only ranking vs the multi-variant brute-force path. Further
+    layers (int8, binary+rerank, HNSW) noted in §6. Per-request `tracing` (`tower-http` `TraceLayer` +
+    `embed_ms`/`query_ms`/`sidecar` on each query) makes the cost visible.
 - **Phase 4b — embedding recall + distilled ranker (optional, `nalgebra`).** Richer than the shipped Rocchio
   taste ranker: port `rank.py` (lexical-seed ridge ranker in embedding space) and `btrank --distill` (PCA +
   logistic over embeddings → score the whole corpus with no LLM calls). *Tests:* recovers a planted signal;

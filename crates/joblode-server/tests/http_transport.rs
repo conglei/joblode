@@ -143,8 +143,8 @@ fn rejects_an_unknown_transport() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unknown transport"),
-        "expected an unknown-transport error, got: {stderr}"
+        stderr.contains("unknown command"),
+        "expected an unknown-command error, got: {stderr}"
     );
 }
 

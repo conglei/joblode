@@ -142,6 +142,28 @@ A host that supports MCP Apps fetches that resource and renders the table in the
 doesn't still gets the structured JSON in every tool result, so nothing breaks. Building the UI is optional
 — the tools work headless without it.
 
+## Speed up semantic search (build the sidecar)
+
+Semantic search over the full ~1M-role corpus is a brute-force cosine scan of the embedding columns — slow
+and CPU-bound when run without hard filters. Build a **compact embedding sidecar** once and it gets ~10–50×
+faster: a single pass writes each role's `jd_embedding` truncated to 256 dims (the Matryoshka prefix of the
+1536-d vectors — still a usable embedding) as a small `FLOAT[256]` file next to the dataset.
+
+```bash
+# Build it once (and after each daily data refresh):
+./target/release/joblode-server build-sidecar     # writes open-jobs.parquet.emb.parquet
+```
+
+The server **auto-attaches** the sidecar on startup if it exists (look for `attached embedding sidecar` in
+the log); otherwise it warns and falls back to the slow full scan. Semantic search then ranks off the small
+file (and still applies your hard filters first). Tune the dimension with `JOBLODE_EMBED_DIM` (smaller =
+faster, slightly less precise). The sidecar stays parquet-in-place — no database, no daily index rebuild
+beyond re-running `build-sidecar`.
+
+> Quality note: the sidecar ranks on `jd_embedding` only (the richest signal), whereas the unindexed path
+> scores the best of title / JD / alternate-title embeddings. Build the sidecar for speed; delete it (or
+> unset `JOBLODE_EMBED_SIDECAR`) to fall back to the multi-variant scan.
+
 ## Configuration
 
 Config is read from the environment. At startup the server also loads a gitignored
@@ -154,7 +176,9 @@ to `.env` and fill in keys (real environment variables take precedence).
 | `JOBLODE_HTTP_ADDR` | `127.0.0.1:8000` | Bind address for the `http` transport (loopback only). |
 | `JOBLODE_WEB_DIR` | `web/dist` | Standalone web app served at `/` over HTTP. |
 | `JOBLODE_APP_HTML` | `web/dist-app/index.html` | MCP App bundle served as the `ui://joblode/app` resource. |
-| *(argument)* | `stdio` | Transport: `stdio` or `http`. |
+| *(argument)* | `stdio` | Command: `stdio`, `http`, or `build-sidecar` (build the semantic-search index, then exit). |
+| `JOBLODE_EMBED_SIDECAR` | `<parquet>.emb.parquet` | Compact embedding sidecar for fast semantic search (see below). Auto-attached on startup if present. |
+| `JOBLODE_EMBED_DIM` | `256` | Truncated embedding dimension `build-sidecar` writes (Matryoshka prefix of the 1536-d vectors). |
 | `JOBLODE_RANK_PROVIDER` | *(unset)* | Set to `gemini` to enable the `match`/`pairwise` ranking methods. |
 | `GEMINI_API_KEY` | *(unset)* | Cheap-model key (override the var name with `JOBLODE_RANK_API_KEY_ENV`). |
 | `JOBLODE_RANK_MATCH_MODEL` | `gemini-2.5-flash` | Model for the absolute `match` pass. |
