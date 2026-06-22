@@ -221,10 +221,33 @@ async fn serve_http(
     let api_store = store.clone();
     let api_model = model.clone();
     let api_embed = embed.clone();
+    // rmcp validates the inbound `Host` header against loopback by default (DNS
+    // rebinding protection). A tunnelled deployment (e.g. cloudflared for a Claude
+    // custom connector) arrives with a public Host, so allow it via
+    // `JOBLODE_ALLOWED_HOSTS` (comma-separated; `*` allows any). The server still
+    // *binds* loopback — only the local tunnel reaches it — so this stays safe.
+    let mcp_config =
+        StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token());
+    let mcp_config = match std::env::var("JOBLODE_ALLOWED_HOSTS") {
+        Ok(value) if value.trim() == "*" => mcp_config.disable_allowed_hosts(),
+        Ok(value) => {
+            let mut hosts: Vec<String> =
+                ["localhost", "127.0.0.1", "::1"].map(String::from).to_vec();
+            hosts.extend(
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|host| !host.is_empty())
+                    .map(String::from),
+            );
+            mcp_config.with_allowed_hosts(hosts)
+        }
+        Err(_) => mcp_config,
+    };
     let service = StreamableHttpService::new(
         move || Ok(JobServer::new(store.clone(), model.clone(), embed.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
+        mcp_config,
     );
 
     // The React build (web UI + the future MCP App ui:// resource); a missing dir

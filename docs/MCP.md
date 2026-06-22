@@ -174,6 +174,7 @@ to `.env` and fill in keys (real environment variables take precedence).
 |---|---|---|
 | `JOBLODE_PARQUET` | `open-jobs.parquet` (relative to the working dir) | Path to the dataset. Use an absolute path when launched by Claude. |
 | `JOBLODE_HTTP_ADDR` | `127.0.0.1:8000` | Bind address for the `http` transport (loopback only). |
+| `JOBLODE_ALLOWED_HOSTS` | *(loopback only)* | Extra `Host` values the MCP transport accepts (comma-separated; `*` = any). Needed when reaching `/mcp` through a tunnel/proxy (e.g. a Claude custom connector) — the server still binds loopback. |
 | `JOBLODE_WEB_DIR` | `web/dist` | Standalone web app served at `/` over HTTP. |
 | `JOBLODE_APP_HTML` | `web/dist-app/index.html` | MCP App bundle served as the `ui://joblode/app` resource. |
 | *(argument)* | `stdio` | Command: `stdio`, `http`, or `build-sidecar` (build the semantic-search index, then exit). |

@@ -184,6 +184,65 @@ async fn well_known_oauth_paths_404_instead_of_falling_through_to_the_spa() {
     assert_eq!(well_known.status(), reqwest::StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn host_allowlist_admits_a_configured_host_and_still_blocks_others() {
+    // Simulates a tunnelled deployment: the public Host must be allowed via
+    // JOBLODE_ALLOWED_HOSTS, while an unconfigured Host is still rejected (DNS
+    // rebinding protection). This is the fix for Claude custom-connector access.
+    let addr = format!("127.0.0.1:{}", free_port());
+    let url = format!("http://{addr}/mcp");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_joblode-server"))
+        .arg("http")
+        .env("JOBLODE_PARQUET", fixture_path())
+        .env("JOBLODE_HTTP_ADDR", &addr)
+        .env("JOBLODE_ALLOWED_HOSTS", "tunnel.example.com")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn joblode-server");
+    let _guard = ServerGuard(child);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build reqwest client");
+    let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"itest","version":"0"}}}"#;
+    let send = |host: &'static str| {
+        client
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header(reqwest::header::HOST, host)
+            .body(init_body)
+    };
+
+    // Poll readiness via the allowed tunnel Host.
+    let mut ok = None;
+    for _ in 0..100 {
+        match send("tunnel.example.com").send().await {
+            Ok(resp) if resp.status() != reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                ok = Some(resp);
+                break;
+            }
+            _ => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
+    let allowed = ok.expect("server should answer on the allowed host within 10s");
+    assert!(
+        allowed.status().is_success(),
+        "configured host should be admitted, got {}",
+        allowed.status()
+    );
+
+    // An unconfigured host is still rejected as a possible DNS-rebinding attempt.
+    let blocked = send("evil.example.com")
+        .send()
+        .await
+        .expect("request with a disallowed host");
+    assert_eq!(blocked.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
 #[test]
 fn rejects_an_unknown_transport() {
     // The transport is validated before the dataset is touched (see main.rs), so
