@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppShell,
-  Button,
   Center,
   Divider,
   Group,
@@ -24,14 +23,17 @@ import type {
   RankResults,
   SearchParams,
   SearchResults,
-  SemanticResults,
 } from "./types";
 
-/** The standalone web UI: filter sidebar, results table, a detail drawer, a
- *  feedback-driven ranking pass, and free-text semantic search — all over the
- *  REST API. The same components serve the MCP App in Phase 5. */
+/** The standalone web UI: one search (hard filters + optional semantic query), a
+ *  results table, a detail drawer, and a feedback-driven ranking pass — all over
+ *  the REST API. The same components serve the MCP App in Phase 5. */
 export function App() {
   const [results, setResults] = useState<SearchResults | null>(null);
+  // Set when the last search carried a semantic query: similarity by id.
+  const [searchScores, setSearchScores] = useState<
+    Record<string, Ranked> | undefined
+  >(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -42,52 +44,46 @@ export function App() {
   const [rankLoading, setRankLoading] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
 
-  const [semantic, setSemantic] = useState<SemanticResults | null>(null);
-  const [semanticLoading, setSemanticLoading] = useState(false);
-  const [semanticError, setSemanticError] = useState<string | null>(null);
-
   // Guards against out-of-order responses: only the most recent call applies.
   const latestSearchId = useRef(0);
   const latestRankId = useRef(0);
-  const latestSemanticId = useRef(0);
 
-  async function runSearch(params: SearchParams) {
+  /** One search: semantic (ranked by meaning) when `query` is set, else a plain
+   *  hard-filter search. */
+  async function runSearch(params: SearchParams, query: string) {
     const searchId = ++latestSearchId.current;
     ++latestRankId.current; // invalidate any in-flight rank call against the old set
     setLoading(true);
     setError(null);
-    setRanked(null); // a new candidate set invalidates the old ranking
+    setRanked(null); // a new result set invalidates the old ranking
     setRankLoading(false);
     setRankError(null);
-    setSemantic(null); // a hard-filter search replaces the semantic view
-    setSemanticError(null);
     try {
-      const next = await searchJobs(params);
-      if (searchId !== latestSearchId.current) return;
-      setResults(next);
+      if (query.length > 0) {
+        const hits = await semanticSearch({ ...params, query });
+        if (searchId !== latestSearchId.current) return;
+        setResults({ total: hits.results.length, results: hits.results });
+        setSearchScores(
+          Object.fromEntries(
+            hits.results.map((hit) => [
+              hit.id,
+              { id: hit.id, score: Math.round(hit.score * 100), why: "" },
+            ]),
+          ),
+        );
+      } else {
+        const next = await searchJobs(params);
+        if (searchId !== latestSearchId.current) return;
+        setResults(next);
+        setSearchScores(undefined);
+      }
     } catch (cause: unknown) {
       if (searchId !== latestSearchId.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
       setResults(null);
+      setSearchScores(undefined);
     } finally {
       if (searchId === latestSearchId.current) setLoading(false);
-    }
-  }
-
-  async function runSemantic(query: string, params: SearchParams) {
-    const semanticId = ++latestSemanticId.current;
-    setSemanticLoading(true);
-    setSemanticError(null);
-    try {
-      const next = await semanticSearch({ ...params, query });
-      if (semanticId !== latestSemanticId.current) return;
-      setSemantic(next);
-    } catch (cause: unknown) {
-      if (semanticId !== latestSemanticId.current) return;
-      setSemanticError(cause instanceof Error ? cause.message : String(cause));
-      setSemantic(null);
-    } finally {
-      if (semanticId === latestSemanticId.current) setSemanticLoading(false);
     }
   }
 
@@ -153,28 +149,12 @@ export function App() {
     ? Object.fromEntries(ranked.results.map((entry) => [entry.id, entry]))
     : undefined;
 
-  // The semantic view shows its own hits with cosine similarity scaled to 0–100.
-  const semanticScores: Record<string, Ranked> | undefined = semantic
-    ? Object.fromEntries(
-        semantic.results.map((hit) => [
-          hit.id,
-          { id: hit.id, score: Math.round(hit.score * 100), why: "" },
-        ]),
-      )
-    : undefined;
-
   const feedbackCount = Object.keys(feedback).length;
 
-  // Display priority: semantic view, else ranked reorder, else search results.
-  const tableRows = semantic
-    ? semantic.results
-    : (rankedRows ?? results?.results ?? null);
-  const tableScores = semantic ? semanticScores : rankScores;
-  const headerCount = semantic
-    ? `${semantic.results.length} semantic matches`
-    : results
-      ? `${results.total.toLocaleString()} matches`
-      : null;
+  // Ranked reorder takes precedence; otherwise show the search rows (with
+  // semantic scores if the search carried a query).
+  const tableRows = rankedRows ?? results?.results ?? null;
+  const tableScores = ranked ? rankScores : searchScores;
 
   return (
     <AppShell
@@ -185,22 +165,19 @@ export function App() {
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between">
           <Title order={3}>joblode</Title>
-          {headerCount ? <Text c="dimmed">{headerCount}</Text> : null}
+          {results ? (
+            <Text c="dimmed">{results.total.toLocaleString()} matches</Text>
+          ) : null}
         </Group>
       </AppShell.Header>
 
       <AppShell.Navbar p="md">
-        <FilterSidebar
-          onSearch={runSearch}
-          loading={loading}
-          onSemantic={runSemantic}
-          semanticLoading={semanticLoading}
-        />
+        <FilterSidebar onSearch={runSearch} loading={loading} />
         <Divider my="md" />
         <RankPanel
           feedbackCount={feedbackCount}
           loading={rankLoading}
-          disabled={!results || results.results.length === 0 || semantic !== null}
+          disabled={!results || results.results.length === 0}
           ranked={ranked !== null}
           onRank={runRank}
           onClear={() => setRanked(null)}
@@ -218,27 +195,14 @@ export function App() {
             {rankError}
           </Alert>
         ) : null}
-        {semanticError ? (
-          <Alert color="red" title="Semantic search failed" mb="md">
-            {semanticError}
-          </Alert>
-        ) : null}
-
-        {semantic ? (
-          <Group justify="space-between" mb="xs">
-            <Text c="dimmed">Semantic matches, by similarity.</Text>
-            <Button variant="subtle" size="xs" onClick={() => setSemantic(null)}>
-              Back to results
-            </Button>
-          </Group>
-        ) : ranked && rankedRows ? (
+        {ranked && rankedRows ? (
           <Text c="dimmed" mb="xs">
             Ranked {rankedRows.length} of{" "}
             {results?.results.length.toLocaleString()} by your feedback.
           </Text>
         ) : null}
 
-        {(loading || semanticLoading) && !tableRows ? (
+        {loading && !results ? (
           <Center mih={240}>
             <Loader />
           </Center>
@@ -253,12 +217,10 @@ export function App() {
           />
         ) : null}
         {tableRows && tableRows.length === 0 ? (
-          <Text c="dimmed">
-            {semantic ? "No semantic matches." : "No roles match these filters."}
-          </Text>
+          <Text c="dimmed">No roles match this search.</Text>
         ) : null}
-        {!tableRows && !loading && !semanticLoading && !error ? (
-          <Text c="dimmed">Set filters and search to see roles.</Text>
+        {!tableRows && !loading && !error ? (
+          <Text c="dimmed">Search to see roles.</Text>
         ) : null}
       </AppShell.Main>
 

@@ -81,7 +81,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect(
-      await screen.findByText("No roles match these filters."),
+      await screen.findByText("No roles match this search."),
     ).toBeInTheDocument();
   });
 
@@ -134,7 +134,7 @@ describe("App", () => {
     expect(screen.getByText(/Ranked 1 of 1/)).toBeInTheDocument();
   });
 
-  it("runs a semantic search and shows scored hits", async () => {
+  it("runs a semantic search from the unified form when a query is given", async () => {
     vi.mocked(semanticSearch).mockResolvedValue({
       results: [{ ...summary, score: 0.91 }],
     });
@@ -142,12 +142,14 @@ describe("App", () => {
     renderApp();
 
     await user.type(
-      screen.getByLabelText("Describe the role / responsibilities"),
+      screen.getByLabelText("Describe the role (optional)"),
       "resilient backend services",
     );
-    await user.click(screen.getByRole("button", { name: "Semantic search" }));
+    await user.click(screen.getByRole("button", { name: "Search" }));
 
+    // A query routes the single Search through semantic, not plain search.
     await waitFor(() => expect(semanticSearch).toHaveBeenCalledOnce());
+    expect(searchJobs).not.toHaveBeenCalled();
     expect(vi.mocked(semanticSearch).mock.calls[0][0]).toMatchObject({
       query: "resilient backend services",
     });
@@ -155,7 +157,6 @@ describe("App", () => {
     // The hit renders with its similarity scaled to 0–100.
     expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
     expect(screen.getByText("91")).toBeInTheDocument();
-    expect(screen.getByText("1 semantic matches")).toBeInTheDocument();
   });
 
   it("surfaces a ranking failure (e.g. unconfigured model)", async () => {
