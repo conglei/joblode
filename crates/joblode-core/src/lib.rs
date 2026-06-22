@@ -343,19 +343,27 @@ impl JobStore {
             return Ok(HashMap::new());
         }
 
+        // Read the compact sidecar vectors when attached (256-d, far less I/O),
+        // else the full `jd_embedding`. Ranking uses these for both candidates and
+        // feedback, so they stay in one space.
+        let (source, column) = match &self.sidecar {
+            Some(sidecar) => (sidecar.path.clone(), "vec"),
+            None => (self.parquet.clone(), "jd_embedding"),
+        };
+
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(", ");
-        // coalesce: rows with a NULL `jd_embedding` come back as "" (→ empty vec),
+        // coalesce: rows with a NULL embedding come back as "" (→ empty vec),
         // never as a NULL that would fail the string conversion.
         let sql = format!(
-            "SELECT cast(id AS VARCHAR), coalesce(array_to_string(jd_embedding, ','), '') \
+            "SELECT cast(id AS VARCHAR), coalesce(array_to_string({column}, ','), '') \
              FROM read_parquet(?) \
              WHERE cast(id AS VARCHAR) IN ({placeholders})"
         );
 
         let mut parameters: Vec<Value> = Vec::with_capacity(ids.len() + 1);
-        parameters.push(Value::Text(self.parquet.clone()));
+        parameters.push(Value::Text(source));
         parameters.extend(ids.iter().map(|id| Value::Text((*id).to_owned())));
 
         let mut statement = self.connection.prepare(&sql)?;
@@ -369,6 +377,52 @@ impl JobStore {
             let vector = parse_embedding(&packed)
                 .map_err(|error| Error::ToSqlConversionFailure(Box::new(error)))?;
             out.insert(id, vector);
+        }
+        Ok(out)
+    }
+
+    /// Returns up to `limit` deduplicated candidate ids matching `criteria`, ordered
+    /// by id. A lightweight id-only projection for the fast (feedback-only) rank
+    /// path — it draws the whole matching set to rank without reading the wide row
+    /// columns that [`search`](Self::search) returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying query fails.
+    pub fn candidate_ids(&self, criteria: &Criteria, limit: usize) -> Result<Vec<String>> {
+        let mut parameters = vec![Value::Text(self.parquet.clone())];
+        let filters = collect_filters(criteria, &mut parameters);
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            WITH filtered AS (
+                SELECT
+                    cast(id AS VARCHAR) AS id,
+                    row_number() OVER (
+                        PARTITION BY
+                            lower(coalesce(nullif(company_name, ''), company, '')),
+                            lower(coalesce(title, ''))
+                        ORDER BY cast(id AS VARCHAR)
+                    ) AS duplicate_rank
+                FROM read_parquet(?)
+                {where_clause}
+            )
+            SELECT id FROM filtered WHERE duplicate_rank = 1
+            ORDER BY id
+            LIMIT {limit}
+            "#
+        );
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(parameters), |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
         }
         Ok(out)
     }

@@ -17,43 +17,51 @@ them.
 - **`semantic_search`** — match a free-text *description of the work* against role
   embeddings by meaning, under the same filters. Use when the structured fields
   don't filter cleanly. Needs an embeddings key.
-- **`rank_jobs`** — reduce a candidate set to a short, ordered shortlist `{id, score,
-  why}`. Pass the user's reactions as `feedback: [{id, label}]` (`liked`/`disliked`)
-  and it personalizes **for free** via a taste ranker — no key. Optional cheap-model
-  `match`/`pairwise` refine the top (need a key + a resume).
+- **`rank_jobs`** — the **finalization** step. Once the criteria are settled, rank the
+  **whole** matching set into an ordered shortlist `{id, score, why}` by the user's
+  taste — learned **for free** from `feedback: [{id, label}]` (`liked`/`disliked`).
+  Fast, keyless, **no resume**. Pass `top` (default 25; ask for ~100 for a final list).
+  (`match`/`pairwise` are an optional cheap-model refine — need a key + resume, much
+  slower; rarely worth it.)
 - **`get_job`** — one role's full record incl. `jd_markdown`.
 
 The result-returning tools render an **interactive card** in the conversation when
 the host supports it (claude.ai / Desktop): a results table with 👍/👎 per role.
 
-## The loop — surface a little, learn, then more
+## Two stages — explore, then finalize
 
-**Don't overwhelm.** The dataset is huge, so it's tempting to run several searches and
-dump 40–50 rows each. Don't. The user can't triage hundreds of JDs. Surface a **small
-batch (~8–10)**, learn from their reactions, then show the next batch.
+Keep **search** and **rank** distinct:
 
-1. **Narrow.** Talk to the user; converge on hard filters (and a one-line description
-   of the work if it's fuzzy). Don't guess silently — confirm the filters.
-2. **Search broad, surface narrow.** `search_jobs` for clean filters, or
-   `semantic_search` when meaning matters — keep the *candidate set* broad (that's
-   cheap to rank). But then **`rank_jobs` with `top: 8–10`** and show only that small
-   shortlist. If you ran several criteria, consolidate into **one** ranked batch, not
-   one card per criterion.
-3. **Validate with the user.** Present that small batch and invite 👍/👎. In the card
-   the user reacts directly; otherwise ask which look good. A handful of reactions is
-   plenty to start.
-4. **Re-rank, then show the next batch.** Feed the accumulated
-   `feedback: [{id, label}]` back into `rank_jobs` — the taste ranker reorders the
-   *whole* candidate set from a few reactions. Surface the next ~8–10 the user hasn't
-   seen. Repeat: each round is sharper because it learns from the last.
-5. **Read the few that matter.** `get_job` for the ones the user liked. **Confirm comp,
-   work authorization, and location against `jd_markdown`** — structured fields are LLM
+- **Explore (search):** figure out *what* to look for. Surface a small batch, let the
+  user + you react, refine the filters, repeat.
+- **Finalize (rank):** once the criteria are right, order *everything* that matches.
+
+### Explore — surface a little, learn, refine
+
+**Don't overwhelm.** The dataset is huge; don't run several searches and dump 40–50 rows
+each. Surface a **small batch (~8–10)**, learn, adjust.
+
+1. **Narrow.** Talk to the user; converge on hard filters (and a one-line description of
+   the work if it's fuzzy). Don't guess silently — confirm the filters.
+2. **Search.** `search_jobs` for clean filters, or `semantic_search` when meaning
+   matters. Show a small batch — not a card per criterion.
+3. **Validate.** Present that batch and invite 👍/👎 (the user reacts in the card, or
+   tell me which look good). A handful of reactions is plenty.
+4. **Refine the criteria.** Reason over the reactions: what do the liked ones share?
+   Adjust the filters / description and search again. Repeat until the criteria feel
+   right — a few rounds, not dozens of results at once.
+
+### Finalize — rank the whole set
+
+5. **Rank.** Call `rank_jobs` with the **settled filters** and all accumulated
+   `feedback: [{id, label}]`. It orders the **whole** matching set by taste and returns
+   the final shortlist (ask for `top: ~100` if you want a broad list). One call — this
+   is the output, not another exploration round.
+6. **Read the few that matter.** `get_job` for the top picks. **Confirm comp, work
+   authorization, and location against `jd_markdown`** — structured fields are LLM
    extractions and can be wrong. The `url` is the only apply link; never invent roles.
-6. **Track.** Maintain a spreadsheet (role, company, match, apply link, status) and the
-   user's running taste, so later searches start from what they liked.
-
-The point: a tight **show a few → react → learn → show a few more** loop, not a wall of
-results. Stop when the user has enough strong matches.
+7. **Track.** Maintain a spreadsheet (role, company, match, apply link, status) and the
+   user's running taste, so later hunts start from what they liked.
 
 ## Remember the user's taste
 

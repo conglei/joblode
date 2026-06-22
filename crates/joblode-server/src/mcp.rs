@@ -83,7 +83,7 @@ impl JobServer {
     }
 
     #[tool(
-        description = "Search live roles by hard filters (function, level, title, company, city, country, min comp). Returns a total match count and compact rows; call get_job for a role's full description."
+        description = "EXPLORE (refine criteria). Search live roles by hard filters (function, level, title, company, city, country, min comp). Use this to surface a page of matches for you and the user to react to, then adjust the filters and search again until the criteria are right — then hand off to rank_jobs to order the whole set. Returns a total match count and compact rows; call get_job for a role's full description."
     )]
     async fn search_jobs(
         &self,
@@ -130,7 +130,7 @@ impl JobServer {
     }
 
     #[tool(
-        description = "Rank a candidate set into a compact shortlist to save cloud tokens. Draws candidates by hard filters (or explicit ids), orders them for free against prior feedback (liked/disliked roles), and optionally refines the top with a cheap model (method 'match' or 'pairwise', which need a configured key and a resume). Returns {results:[{id, score, why}]}."
+        description = "FINALIZE (order the whole set). Once the search criteria are settled, call rank_jobs with those same hard filters to rank the WHOLE matching set into a shortlist by the user's taste — learned for free from prior feedback (liked/disliked role ids). Fast and keyless; no resume needed. Pass feedback:[{id,label}] and optionally top (default 25; ask for more, e.g. 100, for a final list). Returns {results:[{id, score, why}]}. (Optional cheap-model refine via method 'match'/'pairwise' needs a key + resume and is much slower — rarely needed.)"
     )]
     async fn rank_jobs(
         &self,
@@ -248,11 +248,15 @@ impl ServerHandler for JobServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-                "joblode exposes the open-jobs dataset. Use search_jobs to draw a candidate set with \
-                 hard filters, then rank_jobs to reduce it to a compact shortlist (cheaply, against \
-                 the user's prior feedback) before reading details, and get_job for a role's full \
-                 description. Structured fields are LLM extractions; confirm comp, work authorization, \
-                 and location against jd_markdown. The url is the only apply link — never invent roles."
+                "joblode exposes the open-jobs dataset. Two stages, kept distinct: (1) EXPLORE with \
+                 search_jobs / semantic_search — surface a page of matches for you and the user to \
+                 react to, refine the hard filters from that feedback, and repeat until the criteria \
+                 are right. (2) FINALIZE with rank_jobs using those same filters — it orders the WHOLE \
+                 matching set into a shortlist by the user's taste (learned for free from liked/disliked \
+                 role ids; no resume needed). Then get_job for the full description of the few that \
+                 matter. Don't dump 40-50 rows per criterion — surface a small batch, learn, rank, \
+                 repeat. Structured fields are LLM extractions; confirm comp, work authorization, and \
+                 location against jd_markdown. The url is the only apply link — never invent roles."
                     .to_string(),
             )
     }

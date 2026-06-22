@@ -299,6 +299,55 @@ fn store_with_sidecar(tag: &str) -> JobStore {
 }
 
 #[test]
+fn candidate_ids_returns_deduplicated_matches_in_id_order() {
+    let store = JobStore::open(fixture()).expect("fixture should open");
+
+    let ids = store
+        .candidate_ids(
+            &Criteria {
+                cities: vec!["san francisco".into()],
+                ..Criteria::default()
+            },
+            1000,
+        )
+        .expect("candidate_ids should succeed");
+
+    // Same matches as `search`, id-only and ordered by id.
+    assert_eq!(ids, ["city-direct", "city-location", "city-region"]);
+}
+
+#[test]
+fn candidate_ids_deduplicates_company_and_title_like_search() {
+    let store = JobStore::open(fixture()).expect("fixture should open");
+
+    let ids = store
+        .candidate_ids(
+            &Criteria {
+                functions: vec!["engineering".into()],
+                levels: vec!["Lead".into()],
+                ..Criteria::default()
+            },
+            1000,
+        )
+        .expect("candidate_ids should succeed");
+
+    assert_eq!(ids, ["dedup-first"]);
+}
+
+#[test]
+fn embeddings_read_from_the_attached_sidecar() {
+    let store = store_with_sidecar("embeddings");
+
+    // On the 4-d fixture truncation is a no-op, so the sidecar returns the same
+    // vector the full path would — proving the sidecar source is read.
+    let map = store
+        .embeddings(&["city-direct"])
+        .expect("embeddings should succeed");
+
+    assert_eq!(map["city-direct"], vec![1.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
 fn sidecar_semantic_search_orders_by_cosine_similarity() {
     let store = store_with_sidecar("orders");
 

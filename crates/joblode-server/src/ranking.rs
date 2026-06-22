@@ -11,12 +11,18 @@ use joblode_rank::{Candidate, Method, ModelClient, RankRequest};
 
 use crate::dto::{FeedbackItem, RankParams, RankResults};
 
-/// Default ranked-shortlist size.
-const RANK_TOP: usize = 10;
+/// Default ranked-shortlist size. Rank is the finalization step over the whole
+/// matching set, so its shortlist is larger than a search page.
+const RANK_TOP: usize = 25;
 
-/// How many candidates to draw (by hard filter) before ranking, when ranking
-/// from criteria rather than explicit ids.
-const RANK_CANDIDATE_LIMIT: usize = 200;
+/// How many candidates to draw (by hard filter) before ranking, when ranking from
+/// criteria rather than explicit ids. Rank orders the whole matching set, not a
+/// page — the free taste ranker is cheap, so this is generous.
+const RANK_CANDIDATE_LIMIT: usize = 1000;
+
+/// Hard ceiling on the candidate draw, so the rank path can rank far more than a
+/// search page (`MAX_LIMIT`) without being unbounded.
+const RANK_MAX_CANDIDATES: usize = 2000;
 
 /// How many taste-ordered candidates the `match` pass scores (one model call each).
 const REFINE_MATCH: usize = 20;
@@ -86,21 +92,31 @@ pub async fn run(
     };
 
     let criteria = params.filter.criteria();
-    // Clamp to the same hard ceiling search uses, so a client can't force an
-    // unbounded candidate fetch through the rank path.
+    // Clamp to the rank ceiling, so a client can't force an unbounded candidate
+    // fetch — but rank can still order far more than a search page.
     let candidate_limit = params
         .filter
         .limit
         .unwrap_or(RANK_CANDIDATE_LIMIT)
-        .min(crate::dto::MAX_LIMIT);
+        .min(RANK_MAX_CANDIDATES);
     let ids = params.ids;
     let feedback = params.feedback;
     let prep_store = store.clone();
+    // The free taste path needs only embeddings; the model refine paths need the
+    // candidates' title/summary for their prompts.
+    let need_metadata = matches!(method, Method::Match | Method::Pairwise);
 
     // One blocking DB pass: draw candidates and the feedback embeddings.
     let prepared = tokio::task::spawn_blocking(move || {
         let store = prep_store.lock().expect("store mutex poisoned");
-        prepare_candidates(&store, &criteria, candidate_limit, &ids, &feedback)
+        prepare_candidates(
+            &store,
+            &criteria,
+            candidate_limit,
+            &ids,
+            &feedback,
+            need_metadata,
+        )
     })
     .await
     .map_err(|error| RankError::Internal(format!("rank task failed: {error}")))?
@@ -138,45 +154,75 @@ fn parse_method(method: Option<&str>) -> Result<Method, RankError> {
 
 /// Draws the candidate set and resolves feedback ids to embeddings, all under one
 /// held store lock. Candidates missing an embedding still rank (taste score 0).
+///
+/// `need_metadata` is the search↔rank boundary in code: the free taste path needs
+/// only `(id, embedding)`, so it skips the wide row fetch entirely (id-only draw +
+/// one embedding query); the model refine paths fetch full records for their
+/// prompts.
 fn prepare_candidates(
     store: &JobStore,
     criteria: &Criteria,
     candidate_limit: usize,
     ids: &[String],
     feedback: &[FeedbackItem],
+    need_metadata: bool,
 ) -> anyhow::Result<Prepared> {
-    let jobs: Vec<Job> = if ids.is_empty() {
-        store.search(criteria, candidate_limit)?.0
+    // (id, title, summary) per candidate — title/summary empty on the free path.
+    let candidates_meta: Vec<(String, String, String)> = if need_metadata {
+        let jobs: Vec<Job> = if ids.is_empty() {
+            store.search(criteria, candidate_limit)?.0
+        } else {
+            let mut found = Vec::with_capacity(ids.len());
+            let mut seen = std::collections::HashSet::with_capacity(ids.len());
+            for id in ids {
+                if !seen.insert(id.as_str()) {
+                    continue; // skip duplicate ids, keeping first-seen order
+                }
+                if let Some(job) = store.get_job(id)? {
+                    found.push(job);
+                }
+            }
+            found
+        };
+        jobs.into_iter()
+            .map(|job| (job.id, job.title, job.role_summary))
+            .collect()
     } else {
-        let mut found = Vec::with_capacity(ids.len());
-        let mut seen = std::collections::HashSet::with_capacity(ids.len());
-        for id in ids {
-            if !seen.insert(id.as_str()) {
-                continue; // skip duplicate ids, keeping first-seen order
-            }
-            if let Some(job) = store.get_job(id)? {
-                found.push(job);
-            }
-        }
-        found
+        // Free path: id-only draw — no per-id get_job, no wide row columns.
+        let candidate_ids = if ids.is_empty() {
+            store.candidate_ids(criteria, candidate_limit)?
+        } else {
+            let mut seen = std::collections::HashSet::with_capacity(ids.len());
+            ids.iter()
+                .filter(|id| seen.insert(id.as_str()))
+                .cloned()
+                .collect()
+        };
+        candidate_ids
+            .into_iter()
+            .map(|id| (id, String::new(), String::new()))
+            .collect()
     };
 
     // Fetch embeddings for candidates and feedback ids together (deduplicated).
-    let mut wanted: Vec<String> = jobs.iter().map(|job| job.id.clone()).collect();
+    let mut wanted: Vec<String> = candidates_meta
+        .iter()
+        .map(|(id, _, _)| id.clone())
+        .collect();
     wanted.extend(feedback.iter().map(|item| item.id.clone()));
     wanted.sort();
     wanted.dedup();
     let wanted_refs: Vec<&str> = wanted.iter().map(String::as_str).collect();
     let embeddings = store.embeddings(&wanted_refs)?;
 
-    let candidates = jobs
+    let candidates = candidates_meta
         .into_iter()
-        .map(|job| {
-            let embedding = embeddings.get(job.id.as_str()).cloned().unwrap_or_default();
+        .map(|(id, title, summary)| {
+            let embedding = embeddings.get(id.as_str()).cloned().unwrap_or_default();
             Candidate {
-                id: job.id,
-                title: job.title,
-                summary: job.role_summary,
+                id,
+                title,
+                summary,
                 embedding,
             }
         })
