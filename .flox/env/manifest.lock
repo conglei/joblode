@@ -6,6 +6,12 @@
       "cargo": {
         "pkg-path": "cargo"
       },
+      "cargo-deny": {
+        "pkg-path": "cargo-deny"
+      },
+      "cargo-llvm-cov": {
+        "pkg-path": "cargo-llvm-cov"
+      },
       "clippy": {
         "pkg-path": "clippy"
       },
@@ -145,6 +151,246 @@
       ],
       "outputs": {
         "out": "/nix/store/z480b23kymbmrijrl49246mrzyphli15-cargo-1.95.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-deny",
+      "broken": false,
+      "derivation": "/nix/store/zs24wn2nan0pwn8as9drvsrml2gzp4jc-cargo-deny-0.19.8.drv",
+      "description": "Cargo plugin for linting your dependencies",
+      "install_id": "cargo-deny",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-deny-0.19.8",
+      "pname": "cargo-deny",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T03:13:13.738548Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.19.8",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/cd2b794nw31w8fxhidbz869inlwk08pk-cargo-deny-0.19.8"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-deny",
+      "broken": false,
+      "derivation": "/nix/store/dv1lz895bis06yixyxqrkhby9bd5xz67-cargo-deny-0.19.8.drv",
+      "description": "Cargo plugin for linting your dependencies",
+      "install_id": "cargo-deny",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-deny-0.19.8",
+      "pname": "cargo-deny",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T03:44:08.099211Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.19.8",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/lslzcq9hbgq0dm47wfff8p1yq4faxwxx-cargo-deny-0.19.8"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-deny",
+      "broken": false,
+      "derivation": "/nix/store/6zvxaiq5wh2wpa7ssbf6j06gds7n5f6a-cargo-deny-0.19.8.drv",
+      "description": "Cargo plugin for linting your dependencies",
+      "install_id": "cargo-deny",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-deny-0.19.8",
+      "pname": "cargo-deny",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T04:13:05.998518Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.19.8",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/0i9blbqnf6h40sfs60ya508069r1nzka-cargo-deny-0.19.8"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-deny",
+      "broken": false,
+      "derivation": "/nix/store/89kr1d292x3nq7zrhhgd5rmbich31ybn-cargo-deny-0.19.8.drv",
+      "description": "Cargo plugin for linting your dependencies",
+      "install_id": "cargo-deny",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-deny-0.19.8",
+      "pname": "cargo-deny",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T04:47:04.122170Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.19.8",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/rzw1iawi5fgcwy334l7anvzr09jx2vpp-cargo-deny-0.19.8"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-llvm-cov",
+      "broken": false,
+      "derivation": "/nix/store/2clmzjq2x1k4zn32pswl47cpyxx90m8x-cargo-llvm-cov-0.8.5.drv",
+      "description": "Cargo subcommand to easily use LLVM source-based code coverage",
+      "install_id": "cargo-llvm-cov",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-llvm-cov-0.8.5",
+      "pname": "cargo-llvm-cov",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T03:13:13.742950Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.8.5",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/fpiqdh91gwyxalqp409ynm0s0g086w7w-cargo-llvm-cov-0.8.5"
+      },
+      "system": "aarch64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-llvm-cov",
+      "broken": false,
+      "derivation": "/nix/store/6n54r993jpg51rmjzfqpyz94bhzx1sl8-cargo-llvm-cov-0.8.5.drv",
+      "description": "Cargo subcommand to easily use LLVM source-based code coverage",
+      "install_id": "cargo-llvm-cov",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-llvm-cov-0.8.5",
+      "pname": "cargo-llvm-cov",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T03:44:08.104272Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.8.5",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/vwjsi159n89szrx4yh5pc3jlf2gp4fld-cargo-llvm-cov-0.8.5"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-llvm-cov",
+      "broken": false,
+      "derivation": "/nix/store/pqy2zxkrniib06dqvzw38ycmlawp5rdy-cargo-llvm-cov-0.8.5.drv",
+      "description": "Cargo subcommand to easily use LLVM source-based code coverage",
+      "install_id": "cargo-llvm-cov",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-llvm-cov-0.8.5",
+      "pname": "cargo-llvm-cov",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T04:13:06.003007Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.8.5",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/caml9p11dq2figff0dflahpdf0wakzkp-cargo-llvm-cov-0.8.5"
+      },
+      "system": "x86_64-darwin",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "cargo-llvm-cov",
+      "broken": false,
+      "derivation": "/nix/store/1pc43j4y24aqr4v5jf85wf7rfs1vd9l6-cargo-llvm-cov-0.8.5.drv",
+      "description": "Cargo subcommand to easily use LLVM source-based code coverage",
+      "install_id": "cargo-llvm-cov",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "name": "cargo-llvm-cov-0.8.5",
+      "pname": "cargo-llvm-cov",
+      "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+      "rev_count": 1017464,
+      "rev_date": "2026-06-16T02:33:49Z",
+      "scrape_date": "2026-06-17T04:47:04.127555Z",
+      "stabilities": [
+        "staging",
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "0.8.5",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/jjpdf1l6izz6607a346ykra9sndzaw7h-cargo-llvm-cov-0.8.5"
       },
       "system": "x86_64-linux",
       "group": "toplevel",

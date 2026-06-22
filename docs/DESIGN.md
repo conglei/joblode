@@ -281,8 +281,11 @@ reaches parity.
 
 ```
 jobscout/
-  .flox/                      # dev env: rust, node, pnpm, duckdb
+  .flox/                      # dev env: rust, node, pnpm, duckdb, cargo-deny, cargo-llvm-cov
+  .github/                    # CI, CodeQL, Scorecard, dependabot, CODEOWNERS, issue/PR templates
+  CLAUDE.md                   # lean agent guide (points here for architecture)
   Cargo.toml                  # Rust workspace (members = crates/*)
+  deny.toml                   # cargo-deny: advisories / licenses / bans / sources
   package.json                # root: turbo + scripts
   pnpm-workspace.yaml         # JS workspace
   turbo.json                  # JS task graph + cache
@@ -386,3 +389,33 @@ provides the data*; edits flow back to Claude → sheet.
 **When we'd add state on our side** (out of scope for Claude-only): a standalone web app, or server-side
 automation like daily digest emails (JobScream-style). Then add a small SQLite-backed `shortlist`/`status`
 tool. Not now.
+
+---
+
+## 14. Engineering workflow & repo quality
+
+This is a public repo, so the engineering process is part of the artifact. The bar: **`main` stays green,
+checks gate every change, and the setup reads as professional at a glance.**
+
+**CI (every push + PR), all free for public repos:**
+- **Rust** — `cargo fmt --check`, `cargo clippy -D warnings`, tests via `cargo llvm-cov` (coverage), build.
+- **Web** — ESLint, strict `tsc`, Vitest (coverage), Vite build, orchestrated by Turbo.
+- **cargo-deny** — advisories / licenses / bans / sources over the dependency tree (`deny.toml`).
+- **CodeQL** — security analysis (TypeScript today; Rust when GA).
+- **Codecov** — coverage diff on PRs + a badge (makes the TDD discipline visible).
+
+**Scheduled / on main:**
+- **OpenSSF Scorecard** — security-posture score + badge.
+- **Dependabot** — weekly grouped updates for cargo, npm, and GitHub Actions.
+
+**AI review:** **CodeRabbit** (free full-Pro on public repos) reviews every PR; `.coderabbit.yaml` configures it.
+
+**Branch protection on `main`:** require the CI checks (`rust`, `web`, `cargo-deny`) to pass and a PR
+before merge (0 required human approvals — solo-friendly). Direct pushes to `main` are disallowed; work
+flows through PRs, one per phase/task.
+
+**Agent setup:** a **lean** [`CLAUDE.md`](../CLAUDE.md) is the per-session constitution (behavioral
+guardrails + repo map + commands) and points here for architecture — it deliberately does *not* duplicate
+this doc. Heavy personal agent tooling (e.g. Garry Tan's gstack) is kept at the developer's *global* level,
+not committed to this repo, to keep the public tree clean; a small curated `.claude/` may be added later if
+a project-specific skill earns its place.

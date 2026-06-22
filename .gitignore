@@ -7,6 +7,11 @@ node_modules/
 web/dist/
 .turbo/
 
+# Coverage / scan artifacts
+lcov.info
+**/coverage/
+results.sarif
+
 # Data & secrets — never commit
 *.parquet
 *.duckdb
