@@ -17,10 +17,16 @@ fn norm(v: &[f32]) -> f32 {
     dot(v, v).sqrt()
 }
 
-/// Mean of a set of equal-length vectors, or `None` if empty.
+/// Mean of a set of equal-length vectors. `None` if empty or if the vectors
+/// disagree on length — failing closed rather than silently truncating (a NULL
+/// embedding arrives as an empty vector, which must not bias the direction).
 fn mean(vectors: &[Vec<f32>]) -> Option<Vec<f32>> {
     let first = vectors.first()?;
-    let mut acc = vec![0.0f32; first.len()];
+    let dims = first.len();
+    if dims == 0 || vectors.iter().any(|v| v.len() != dims) {
+        return None;
+    }
+    let mut acc = vec![0.0f32; dims];
     for v in vectors {
         for (a, x) in acc.iter_mut().zip(v) {
             *a += x;
@@ -135,5 +141,13 @@ mod tests {
         let model = TasteModel::from_examples(&[A1.to_vec()], &[]).unwrap();
         assert_eq!(model.score(&[0.0, 0.0, 0.0]), 0.0);
         assert_eq!(model.score(&[1.0, 0.0]), 0.0); // wrong length
+    }
+
+    #[test]
+    fn mismatched_training_dimensions_yield_no_model() {
+        // A NULL embedding (empty vec) mixed with real ones must fail closed, not
+        // silently truncate the learned direction.
+        assert!(TasteModel::from_examples(&[vec![1.0, 0.0, 0.0], vec![]], &[]).is_none());
+        assert!(TasteModel::from_examples(&[vec![1.0, 0.0], vec![1.0]], &[]).is_none());
     }
 }

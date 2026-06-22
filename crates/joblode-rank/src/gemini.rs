@@ -13,15 +13,30 @@ use crate::model::{JobText, MatchScore, ModelClient};
 /// Gemini's OpenAI-compatible base URL.
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
 
+/// Outbound request timeout, so an upstream stall can't hang a ranking call.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Cheap-model client. Holds separate models for the absolute (`match`) and
 /// comparative (`pairwise`) passes, per DESIGN's config.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GeminiClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
     match_model: String,
     pair_model: String,
+}
+
+impl std::fmt::Debug for GeminiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the API key, so it can't leak via logs or error output.
+        f.debug_struct("GeminiClient")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("match_model", &self.match_model)
+            .field("pair_model", &self.pair_model)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GeminiClient {
@@ -34,7 +49,10 @@ impl GeminiClient {
             base_url.trim_end_matches('/').to_string()
         };
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("reqwest client builds with a timeout"),
             base_url,
             api_key,
             match_model,

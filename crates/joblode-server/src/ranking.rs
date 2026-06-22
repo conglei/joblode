@@ -61,7 +61,13 @@ pub async fn run(
     };
 
     let criteria = params.filter.criteria();
-    let candidate_limit = params.filter.limit.unwrap_or(RANK_CANDIDATE_LIMIT);
+    // Clamp to the same hard ceiling search uses, so a client can't force an
+    // unbounded candidate fetch through the rank path.
+    let candidate_limit = params
+        .filter
+        .limit
+        .unwrap_or(RANK_CANDIDATE_LIMIT)
+        .min(crate::dto::MAX_LIMIT);
     let ids = params.ids;
     let feedback = params.feedback;
     let prep_store = store.clone();
