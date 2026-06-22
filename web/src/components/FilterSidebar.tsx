@@ -20,6 +20,7 @@ function buildParams(state: {
   levels: string[];
   country: string;
   minComp: number | "";
+  postedWithinDays: number | "";
 }): SearchParams {
   const params: SearchParams = {};
   if (state.titles.length) params.titles = state.titles;
@@ -31,6 +32,9 @@ function buildParams(state: {
   const country = state.country.trim().toUpperCase();
   if (country) params.country = country;
   if (typeof state.minComp === "number") params.min_comp = state.minComp;
+  if (typeof state.postedWithinDays === "number" && state.postedWithinDays > 0) {
+    params.posted_within_days = state.postedWithinDays;
+  }
   return params;
 }
 
@@ -53,6 +57,7 @@ export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
   const [levels, setLevels] = useState<string[]>([]);
   const [country, setCountry] = useState("");
   const [minComp, setMinComp] = useState<number | "">("");
+  const [postedWithinDays, setPostedWithinDays] = useState<number | "">("");
 
   function submit() {
     onSearch(
@@ -64,6 +69,7 @@ export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
         levels,
         country,
         minComp,
+        postedWithinDays,
       }),
       query.trim(),
     );
@@ -130,6 +136,16 @@ export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
         value={minComp}
         onChange={(value) =>
           setMinComp(typeof value === "number" ? value : "")
+        }
+      />
+      <NumberInput
+        label="Posted within (days)"
+        description="Only roles posted recently (e.g. 14 = past two weeks)."
+        placeholder="e.g. 14"
+        min={1}
+        value={postedWithinDays}
+        onChange={(value) =>
+          setPostedWithinDays(typeof value === "number" ? value : "")
         }
       />
       <Button type="submit" loading={loading}>

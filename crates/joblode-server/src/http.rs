@@ -14,12 +14,9 @@ use axum::{
 use joblode_core::{Job, JobStore};
 use joblode_rank::{EmbedClient, ModelClient};
 
-use crate::dto::{
-    JobSummary, RankParams, RankResults, SearchParams, SearchResults, SemanticParams,
-    SemanticResults,
-};
+use crate::dto::{RankParams, RankResults, SearchParams, SearchResults};
 use crate::ranking::{self, RankError};
-use crate::semantic;
+use crate::search;
 
 /// Shared, read-only state for the API handlers.
 #[derive(Clone)]
@@ -40,7 +37,6 @@ pub fn router(
         .route("/api/search", post(search))
         .route("/api/job/{id}", get(job))
         .route("/api/rank", post(rank))
-        .route("/api/semantic", post(semantic_search))
         .with_state(ApiState {
             store,
             model,
@@ -48,28 +44,20 @@ pub fn router(
         })
 }
 
-/// `POST /api/search` — hard-filter the corpus, returning the full match count
-/// plus a capped page of compact rows.
+/// `POST /api/search` — filter the corpus (keyword/structured), or, when a semantic
+/// `query` is given, order by similarity to it. 400 if a `query` is set but no
+/// embeddings model is configured.
 async fn search(
     State(state): State<ApiState>,
     Json(params): Json<SearchParams>,
 ) -> Result<Json<SearchResults>, (StatusCode, String)> {
-    let criteria = params.criteria();
-    let limit = params.effective_limit();
-    let store = state.store.clone();
-
-    let (jobs, total) = tokio::task::spawn_blocking(move || {
-        store
-            .lock()
-            .expect("store mutex poisoned")
-            .search(&criteria, limit)
-    })
-    .await
-    .map_err(|error| internal("search task", error))?
-    .map_err(|error| internal("search", error))?;
-
-    let results = jobs.iter().map(JobSummary::from).collect();
-    Ok(Json(SearchResults { total, results }))
+    search::run(state.store.clone(), state.embed.clone(), params)
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            RankError::Internal(detail) => internal("search", detail),
+        })
 }
 
 /// `GET /api/job/{id}` — the full record, including `jd_markdown`. 404 if unknown.
@@ -97,28 +85,18 @@ async fn rank(
     State(state): State<ApiState>,
     Json(params): Json<RankParams>,
 ) -> Result<Json<RankResults>, (StatusCode, String)> {
-    ranking::run(state.store.clone(), state.model.clone(), params)
-        .await
-        .map(Json)
-        .map_err(|error| match error {
-            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-            RankError::Internal(detail) => internal("rank", detail),
-        })
-}
-
-/// `POST /api/semantic` — free-text semantic search over role embeddings. 400 if
-/// the query is empty or no embeddings model is configured.
-async fn semantic_search(
-    State(state): State<ApiState>,
-    Json(params): Json<SemanticParams>,
-) -> Result<Json<SemanticResults>, (StatusCode, String)> {
-    semantic::run(state.store.clone(), state.embed.clone(), params)
-        .await
-        .map(Json)
-        .map_err(|error| match error {
-            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-            RankError::Internal(detail) => internal("semantic", detail),
-        })
+    ranking::run(
+        state.store.clone(),
+        state.model.clone(),
+        state.embed.clone(),
+        params,
+    )
+    .await
+    .map(Json)
+    .map_err(|error| match error {
+        RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+        RankError::Internal(detail) => internal("rank", detail),
+    })
 }
 
 /// Logs the real failure server-side and returns an opaque 500, so DuckDB/query
@@ -296,13 +274,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_search_orders_by_similarity() {
+    async fn search_with_a_query_orders_by_similarity_and_scores() {
         let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
             1.0, 0.0, 0.0, 0.0,
         ]));
         let response = semantic_app(Some(embed))
+            .oneshot(post_search(
+                serde_json::json!({ "query": "backend engineering" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert_eq!(rows[0]["id"], "city-direct");
+        // A semantic query attaches a similarity score.
+        assert!(rows[0]["score"].as_f64().unwrap() > 0.99);
+    }
+
+    #[tokio::test]
+    async fn search_with_a_query_reports_the_filter_total_not_the_returned_count() {
+        // The query ranks within the hard-filtered set; `total` is that set's size,
+        // not the (limit-capped) number of rows returned.
+        let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
+            1.0, 0.0, 0.0, 0.0,
+        ]));
+        let response = semantic_app(Some(embed))
+            .oneshot(post_search(
+                serde_json::json!({ "query": "backend engineering", "limit": 1 }),
+            ))
+            .await
+            .expect("request");
+
+        let data = body_json(response).await;
+        assert_eq!(data["results"].as_array().expect("results").len(), 1);
+        // The rank fixture has more than one role, so total exceeds the one row.
+        assert!(data["total"].as_u64().unwrap() > 1);
+    }
+
+    #[tokio::test]
+    async fn search_with_a_query_400s_without_an_embedder() {
+        let response = semantic_app(None)
+            .oneshot(post_search(
+                serde_json::json!({ "query": "backend engineering" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rank_with_a_query_orders_by_query_similarity_at_cold_start() {
+        // No feedback: the query is the only signal, so rank orders by similarity
+        // to it (the embedder maps any query to the "engineering" direction).
+        let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
+            1.0, 0.0, 0.0, 0.0,
+        ]));
+        let response = router(store_at("rank_fixture.parquet"), None, Some(embed))
             .oneshot(post_json(
-                "/api/semantic",
+                "/api/rank",
                 serde_json::json!({ "query": "backend engineering" }),
             ))
             .await
@@ -315,15 +346,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_search_400s_without_an_embedder() {
-        let response = semantic_app(None)
+    async fn rank_pool_ignores_a_leaked_search_limit() {
+        // A `limit` carried over from search must not shrink the candidate pool:
+        // with feedback and top:5, rank should still return more than `limit:1`.
+        let response = rank_app(None)
             .oneshot(post_json(
-                "/api/semantic",
-                serde_json::json!({ "query": "backend engineering" }),
+                "/api/rank",
+                serde_json::json!({
+                    "feedback": [{ "id": "city-direct", "label": "liked" }],
+                    "limit": 1,
+                    "top": 5
+                }),
             ))
             .await
             .expect("request");
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert!(
+            rows.len() > 1,
+            "leaked limit must not cap the pool: {}",
+            rows.len()
+        );
+        assert_eq!(rows[0]["id"], "city-direct");
     }
 
     #[tokio::test]

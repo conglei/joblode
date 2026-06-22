@@ -28,6 +28,25 @@ pub struct Criteria {
     pub country: Option<String>,
     /// Annual compensation floor in thousands.
     pub min_comp: Option<f64>,
+    /// Only roles posted on or after this RFC3339 timestamp (a freshness window).
+    /// Roles with a missing or unparseable `posted_at` are excluded when set.
+    pub posted_after: Option<String>,
+}
+
+impl Criteria {
+    /// True when no hard filter is set — every role passes. A semantic search over
+    /// empty criteria scans the whole corpus's embeddings (see DESIGN §6).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.functions.is_empty()
+            && self.levels.is_empty()
+            && self.titles.is_empty()
+            && self.companies.is_empty()
+            && self.cities.is_empty()
+            && self.country.is_none()
+            && self.min_comp.is_none()
+            && self.posted_after.is_none()
+    }
 }
 
 /// A job record returned by search or retrieval.
@@ -69,10 +88,21 @@ pub struct Job {
     pub jd_markdown: String,
 }
 
-/// Read-only access to one parquet dataset.
+/// A compact embedding sidecar: `id` + a truncated `jd_embedding` (`FLOAT[dim]`),
+/// built once from the dataset. Semantic search scans this instead of the full
+/// embedding columns — far less I/O and `dim`× less compute (see DESIGN §6).
+#[derive(Debug, Clone)]
+struct Sidecar {
+    path: String,
+    dim: usize,
+}
+
+/// Read-only access to one parquet dataset, optionally with an embedding sidecar
+/// for fast semantic search.
 pub struct JobStore {
     connection: Connection,
     parquet: String,
+    sidecar: Option<Sidecar>,
 }
 
 impl std::fmt::Debug for JobStore {
@@ -105,7 +135,85 @@ impl JobStore {
         Ok(Self {
             connection,
             parquet,
+            sidecar: None,
         })
+    }
+
+    /// Builds a compact embedding sidecar at `out_path`: each role's `id` and its
+    /// `jd_embedding` truncated to the first `target_dim` dimensions, stored as a
+    /// `FLOAT[dim]` parquet column. Truncation is the Matryoshka property of the
+    /// `text-embedding-3-*` models — the prefix is still a usable embedding — and
+    /// `array_cosine_similarity` renormalizes, so no separate normalize step is
+    /// needed. Returns the effective `dim` written (`min(target_dim, actual)`).
+    ///
+    /// Run this once after a data refresh; point [`attach_sidecar`](Self::attach_sidecar)
+    /// at the output to enable the fast path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dataset has no usable `jd_embedding`, or the copy
+    /// query fails (e.g. the output path is not writable).
+    pub fn build_embedding_sidecar(
+        &self,
+        out_path: impl AsRef<Path>,
+        target_dim: usize,
+    ) -> Result<usize> {
+        let out = out_path
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| Error::InvalidPath(out_path.as_ref().to_path_buf()))?;
+        // The stored dimension can't exceed what the dataset actually carries.
+        let actual: i64 = self.connection.query_row(
+            "SELECT len(jd_embedding) FROM read_parquet(?) WHERE jd_embedding IS NOT NULL LIMIT 1",
+            [&self.parquet],
+            |row| row.get(0),
+        )?;
+        let dim = (usize::try_from(actual).unwrap_or(0))
+            .min(target_dim)
+            .max(1);
+        let sql = format!(
+            "COPY (SELECT cast(id AS VARCHAR) AS id, \
+                    jd_embedding[1:{dim}]::FLOAT[{dim}] AS vec \
+             FROM read_parquet('{main}') WHERE jd_embedding IS NOT NULL) \
+             TO '{out}' (FORMAT PARQUET)",
+            main = sql_quote(&self.parquet),
+            out = sql_quote(out),
+        );
+        self.connection.execute(&sql, [])?;
+        Ok(dim)
+    }
+
+    /// The attached sidecar's dimension, or `None` when semantic search runs the
+    /// brute-force full-embedding scan. Lets callers log which path a query took.
+    #[must_use]
+    pub fn semantic_index_dim(&self) -> Option<usize> {
+        self.sidecar.as_ref().map(|sidecar| sidecar.dim)
+    }
+
+    /// Enables the fast semantic-search path by attaching the sidecar at `path`
+    /// (built by [`build_embedding_sidecar`](Self::build_embedding_sidecar)). Its
+    /// dimension is read from the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is not valid UTF-8 or the sidecar can't be read.
+    pub fn attach_sidecar(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| Error::InvalidPath(path.as_ref().to_path_buf()))?
+            .to_owned();
+        let dim: i64 = self.connection.query_row(
+            "SELECT len(vec) FROM read_parquet(?) LIMIT 1",
+            [&path],
+            |row| row.get(0),
+        )?;
+        // Reject a bogus dimension cleanly here rather than letting a `0`-d sidecar
+        // surface as a confusing failure on the first semantic query.
+        let dim =
+            usize::try_from(dim).map_err(|_| Error::IntegralValueOutOfRange(0, i128::from(dim)))?;
+        self.sidecar = Some(Sidecar { path, dim });
+        Ok(())
     }
 
     /// Searches jobs and returns up to `limit` deduplicated rows plus the total
@@ -240,19 +348,27 @@ impl JobStore {
             return Ok(HashMap::new());
         }
 
+        // Read the compact sidecar vectors when attached (256-d, far less I/O),
+        // else the full `jd_embedding`. Ranking uses these for both candidates and
+        // feedback, so they stay in one space.
+        let (source, column) = match &self.sidecar {
+            Some(sidecar) => (sidecar.path.clone(), "vec"),
+            None => (self.parquet.clone(), "jd_embedding"),
+        };
+
         let placeholders = std::iter::repeat_n("?", ids.len())
             .collect::<Vec<_>>()
             .join(", ");
-        // coalesce: rows with a NULL `jd_embedding` come back as "" (→ empty vec),
+        // coalesce: rows with a NULL embedding come back as "" (→ empty vec),
         // never as a NULL that would fail the string conversion.
         let sql = format!(
-            "SELECT cast(id AS VARCHAR), coalesce(array_to_string(jd_embedding, ','), '') \
+            "SELECT cast(id AS VARCHAR), coalesce(array_to_string({column}, ','), '') \
              FROM read_parquet(?) \
              WHERE cast(id AS VARCHAR) IN ({placeholders})"
         );
 
         let mut parameters: Vec<Value> = Vec::with_capacity(ids.len() + 1);
-        parameters.push(Value::Text(self.parquet.clone()));
+        parameters.push(Value::Text(source));
         parameters.extend(ids.iter().map(|id| Value::Text((*id).to_owned())));
 
         let mut statement = self.connection.prepare(&sql)?;
@@ -266,6 +382,89 @@ impl JobStore {
             let vector = parse_embedding(&packed)
                 .map_err(|error| Error::ToSqlConversionFailure(Box::new(error)))?;
             out.insert(id, vector);
+        }
+        Ok(out)
+    }
+
+    /// Counts the deduplicated roles matching `criteria` — the size of the candidate
+    /// set the hard filters define, independent of any ranking or row cap. Used to
+    /// report `total` for a semantic search (the filters constrain; the query only
+    /// ranks within them).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying query fails.
+    pub fn count(&self, criteria: &Criteria) -> Result<usize> {
+        let mut parameters = vec![Value::Text(self.parquet.clone())];
+        let filters = collect_filters(criteria, &mut parameters);
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            WITH filtered AS (
+                SELECT row_number() OVER (
+                    PARTITION BY
+                        lower(coalesce(nullif(company_name, ''), company, '')),
+                        lower(coalesce(title, ''))
+                    ORDER BY cast(id AS VARCHAR)
+                ) AS duplicate_rank
+                FROM read_parquet(?)
+                {where_clause}
+            )
+            SELECT count(*) FROM filtered WHERE duplicate_rank = 1
+            "#
+        );
+        let total: i64 = self
+            .connection
+            .query_row(&sql, params_from_iter(parameters), |row| row.get(0))?;
+        Ok(usize::try_from(total).unwrap_or(0))
+    }
+
+    /// Returns up to `limit` deduplicated candidate ids matching `criteria`, ordered
+    /// by id. A lightweight id-only projection for the fast (feedback-only) rank
+    /// path — it draws the whole matching set to rank without reading the wide row
+    /// columns that [`search`](Self::search) returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying query fails.
+    pub fn candidate_ids(&self, criteria: &Criteria, limit: usize) -> Result<Vec<String>> {
+        let mut parameters = vec![Value::Text(self.parquet.clone())];
+        let filters = collect_filters(criteria, &mut parameters);
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            WITH filtered AS (
+                SELECT
+                    cast(id AS VARCHAR) AS id,
+                    row_number() OVER (
+                        PARTITION BY
+                            lower(coalesce(nullif(company_name, ''), company, '')),
+                            lower(coalesce(title, ''))
+                        ORDER BY cast(id AS VARCHAR)
+                    ) AS duplicate_rank
+                FROM read_parquet(?)
+                {where_clause}
+            )
+            SELECT id FROM filtered WHERE duplicate_rank = 1
+            ORDER BY id
+            LIMIT {limit}
+            "#
+        );
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(parameters), |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
         }
         Ok(out)
     }
@@ -291,6 +490,9 @@ impl JobStore {
     ) -> Result<Vec<(Job, f32)>> {
         if query.is_empty() {
             return Ok(Vec::new());
+        }
+        if let Some(sidecar) = &self.sidecar {
+            return self.semantic_search_sidecar(sidecar, query, criteria, limit);
         }
         let dim = query.len();
         // The query vector is our own computed data (no injection); inline it once
@@ -358,6 +560,101 @@ impl JobStore {
         }
         Ok(out)
     }
+
+    /// Fast semantic search over the attached `sidecar`: rank by cosine over the
+    /// truncated `jd_embedding`, then fetch full rows for just the top `limit`.
+    /// Hard filters need the dataset's structured columns, so a filtered query
+    /// joins the main parquet in the ranking stage; an unfiltered one scans only
+    /// the (small) sidecar.
+    fn semantic_search_sidecar(
+        &self,
+        sidecar: &Sidecar,
+        query: &[f32],
+        criteria: &Criteria,
+        limit: usize,
+    ) -> Result<Vec<(Job, f32)>> {
+        let dim = sidecar.dim;
+        // Truncate the query to the sidecar's dimension (Matryoshka prefix);
+        // `array_cosine_similarity` renormalizes both sides.
+        let literal = query
+            .iter()
+            .take(dim)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let main = sql_quote(&self.parquet);
+        let side = sql_quote(&sidecar.path);
+
+        let mut parameters: Vec<Value> = Vec::new();
+        let filters = collect_filters(criteria, &mut parameters);
+        let ranked = if filters.is_empty() {
+            // Unfiltered: rank straight off the compact sidecar — minimal I/O.
+            format!(
+                "SELECT cast(id AS VARCHAR) AS rid, \
+                        array_cosine_similarity(vec::FLOAT[{dim}], q.qv) AS similarity \
+                 FROM read_parquet('{side}'), q \
+                 ORDER BY similarity DESC LIMIT {limit}"
+            )
+        } else {
+            // Filtered: prune on the dataset's structured columns first, then rank.
+            format!(
+                "SELECT cast(m.id AS VARCHAR) AS rid, \
+                        array_cosine_similarity(s.vec::FLOAT[{dim}], q.qv) AS similarity \
+                 FROM read_parquet('{main}') m \
+                 JOIN read_parquet('{side}') s ON cast(m.id AS VARCHAR) = cast(s.id AS VARCHAR), q \
+                 WHERE {filters} \
+                 ORDER BY similarity DESC LIMIT {limit}",
+                filters = filters.join(" AND "),
+            )
+        };
+
+        let sql = format!(
+            r#"
+            WITH q AS (SELECT [{literal}]::FLOAT[{dim}] AS qv),
+            ranked AS ({ranked})
+            SELECT
+                cast(m.id AS VARCHAR),
+                coalesce(nullif(m.company_name, ''), m.company, ''),
+                coalesce(m.title, ''),
+                coalesce(m.url, ''),
+                coalesce(m."function", ''),
+                coalesce(m.sub_function, ''),
+                coalesce(m.level, ''),
+                coalesce(m.work_mode, ''),
+                coalesce(m.remote_scope, ''),
+                coalesce(m.country_code, ''),
+                coalesce(m.salary_min_k, -1),
+                coalesce(m.salary_max_k, -1),
+                coalesce(m.location, ''),
+                coalesce(m.city, ''),
+                coalesce(m.region, ''),
+                coalesce(m.role_summary, ''),
+                coalesce(m.jd_markdown, ''),
+                r.similarity
+            FROM ranked r
+            JOIN read_parquet('{main}') m ON cast(m.id AS VARCHAR) = r.rid
+            ORDER BY r.similarity DESC
+            "#
+        );
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(parameters), |row| {
+            Ok((job_from_row(row)?, row.get::<_, f32>(17)?))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+}
+
+/// Escapes a string for inlining inside a single-quoted SQL literal (our own
+/// config paths, never user input — the query vector and parquet paths are inlined
+/// while user-supplied filter values stay parameterized).
+fn sql_quote(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 /// Builds the shared hard-filter `WHERE` fragments for `criteria`, pushing their
@@ -417,6 +714,19 @@ fn collect_filters(criteria: &Criteria, parameters: &mut Vec<Value>) -> Vec<Stri
     if let Some(min_comp) = criteria.min_comp {
         filters.push("(coalesce(salary_max_k, -1) = -1 OR salary_max_k >= ?)".to_owned());
         parameters.push(Value::Double(min_comp));
+    }
+
+    // Freshness window: only roles posted on or after the threshold. `try_cast`
+    // tolerates the varied/empty `posted_at` strings — an unparseable date yields
+    // NULL, which fails the comparison, so undated roles are excluded (as intended
+    // for "posted in the last N days").
+    if let Some(after) = criteria
+        .posted_after
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        filters.push("try_cast(posted_at AS TIMESTAMPTZ) >= try_cast(? AS TIMESTAMPTZ)".to_owned());
+        parameters.push(Value::Text(after.to_owned()));
     }
 
     filters
@@ -492,4 +802,30 @@ fn job_from_row(row: &Row<'_>) -> Result<Job> {
         role_summary: row.get(15)?,
         jd_markdown: row.get(16)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Criteria;
+
+    #[test]
+    fn criteria_is_empty_only_when_no_filter_is_set() {
+        assert!(Criteria::default().is_empty());
+
+        assert!(!Criteria {
+            cities: vec!["sf".to_owned()],
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!Criteria {
+            country: Some("US".to_owned()),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!Criteria {
+            min_comp: Some(150.0),
+            ..Default::default()
+        }
+        .is_empty());
+    }
 }

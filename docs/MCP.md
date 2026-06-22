@@ -4,23 +4,24 @@ How to run the joblode MCP server locally and connect Claude to it so you can se
 dataset (~1M live roles) from a conversation. For architecture and the roadmap, see
 [DESIGN.md](DESIGN.md).
 
-The server exposes three MCP tools today:
+For the full agent-driven workflow (narrow → search → rank → intros → track) and copy-paste prompts, see
+[ORCHESTRATION.md](ORCHESTRATION.md).
 
-- **`search_jobs`** — hard filters (function, level, title, company, city, country, min comp) → a total
+The server exposes three MCP tools, in two stages — **explore** (search) and **finalize** (rank):
+
+- **`search`** — one search, two match modes: hard filters (function, level, title, company, city,
+  country, min comp) for keyword/structured match, **plus an optional `query`** for semantic match against
+  the job description (best of title / JD / alternate titles, by cosine similarity). Filter-only needs no
+  key; a `query` orders by similarity and attaches a `score`, and **requires an embeddings key**. Returns a
   match count plus compact rows (`limit`-capped, default 50).
+- **`rank_jobs`** — the finalization step: orders the **whole** matching set into a shortlist
+  `{id, score, why}` by the user's taste, learned **for free** from `feedback` (`[{id, label}]`,
+  `liked`/`applied`/… or `disliked`/`rejected`/…). No resume needed; default `top` 25 (ask for ~100). A
+  cheap-model refine (`method: "match"`/`"pairwise"`, needs a key + `resume`) is optional and much slower.
 - **`get_job`** — one role by `id`, including its full `jd_markdown`.
-- **`rank_jobs`** — reduces a candidate set to a compact, ordered shortlist `{id, score, why}` so the
-  cloud model reads dozens of rows, not thousands. Draws candidates by the same filters (or explicit
-  `ids`), orders them **for free** against prior `feedback` (`[{id, label}]`, where label is
-  `liked`/`applied`/… or `disliked`/`rejected`/…), and — if a cheap model is configured — refines the
-  top with `method: "match"` or `"pairwise"` (these also need a `resume`). Without a key, the free
-  feedback-driven ranking still works.
-- **`semantic_search`** — matches a free-text `query` (a description of the role/responsibilities) against
-  role embeddings by cosine similarity, scoring each role by its **best-matching variant** (title, JD, or
-  an alternate title) — useful when the messy structured fields don't filter cleanly. Takes the same hard
-  filters; returns compact rows with a `score`. **Requires an embeddings key** (see config).
 
-The in-conversation React UI lands in a later phase (DESIGN §8).
+When a host supports MCP Apps, the result-returning tools (`search`, `rank_jobs`) also render an
+**interactive results table** in the conversation — see [Run the web UI](#run-the-web-ui-optional).
 
 ## 1. Get the dataset
 
@@ -110,26 +111,84 @@ Once connected, drive it from the conversation — for example:
 - "Filter to San Francisco, product function, comp floor 180k."
 - "Open the full description for that third result."
 
-Claude calls `search_jobs` to draw the candidate set, then `get_job` for the roles you want to read in
+Claude calls `search` to draw the candidate set, then `get_job` for the roles you want to read in
 full. Structured fields are LLM extractions — confirm comp, work authorization, and location against
 `jd_markdown`, and use the `url` (the only apply link) to apply.
 
+## Run the web UI (optional)
+
+One React build serves two runtimes (DESIGN §7): a **standalone web app** over the REST API, and the
+**MCP App** `ui://` resource rendered inside Claude. Build both with one command:
+
+```bash
+pnpm --filter @joblode/web build
+# → web/dist/      the standalone web app (multi-file)
+# → web/dist-app/  the MCP App bundle (one self-contained index.html)
+```
+
+Then run the server over HTTP and open it:
+
+```bash
+./target/release/joblode-server http      # from the repo root
+# standalone UI:  http://127.0.0.1:8000/
+```
+
+The `http` server serves `web/dist` at `/` (override with `JOBLODE_WEB_DIR`) and serves the MCP App bundle
+as the `ui://joblode/app` resource, read from `web/dist-app/index.html` (override with `JOBLODE_APP_HTML`).
+A host that supports MCP Apps fetches that resource and renders the table in the conversation; one that
+doesn't still gets the structured JSON in every tool result, so nothing breaks. Building the UI is optional
+— the tools work headless without it.
+
+## Speed up semantic search (build the sidecar)
+
+Semantic search over the full ~1M-role corpus is a brute-force cosine scan of the embedding columns — slow
+and CPU-bound when run without hard filters. Build a **compact embedding sidecar** once and it gets ~10–50×
+faster: a single pass writes each role's `jd_embedding` truncated to 256 dims (the Matryoshka prefix of the
+1536-d vectors — still a usable embedding) as a small `FLOAT[256]` file next to the dataset.
+
+```bash
+# Build it once (and after each daily data refresh):
+./target/release/joblode-server build-sidecar     # writes open-jobs.parquet.emb.parquet
+```
+
+The server **auto-attaches** the sidecar on startup if it exists (look for `attached embedding sidecar` in
+the log); otherwise it warns and falls back to the slow full scan. Semantic search then ranks off the small
+file (and still applies your hard filters first). Tune the dimension with `JOBLODE_EMBED_DIM` (smaller =
+faster, slightly less precise). The sidecar stays parquet-in-place — no database, no daily index rebuild
+beyond re-running `build-sidecar`.
+
+> Quality note: the sidecar ranks on `jd_embedding` only (the richest signal), whereas the unindexed path
+> scores the best of title / JD / alternate-title embeddings. Build the sidecar for speed; delete it (or
+> unset `JOBLODE_EMBED_SIDECAR`) to fall back to the multi-variant scan.
+
 ## Configuration
+
+Config is read from the environment. At startup the server also loads a gitignored
+`.env` from the working directory if present — copy [`.env.example`](../.env.example)
+to `.env` and fill in keys (real environment variables take precedence).
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `JOBLODE_PARQUET` | `open-jobs.parquet` (relative to the working dir) | Path to the dataset. Use an absolute path when launched by Claude. |
 | `JOBLODE_HTTP_ADDR` | `127.0.0.1:8000` | Bind address for the `http` transport (loopback only). |
-| *(argument)* | `stdio` | Transport: `stdio` or `http`. |
+| `JOBLODE_ALLOWED_HOSTS` | *(loopback only)* | Extra `Host` values the MCP transport accepts (comma-separated; `*` = any). Needed when reaching `/mcp` through a tunnel/proxy (e.g. a Claude custom connector) — the server still binds loopback. |
+| `JOBLODE_WEB_DIR` | `web/dist` | Standalone web app served at `/` over HTTP. |
+| `JOBLODE_APP_HTML` | `web/dist-app/index.html` | MCP App bundle served as the `ui://joblode/app` resource. |
+| *(argument)* | `stdio` | Command: `stdio`, `http`, or `build-sidecar` (build the semantic-search index, then exit). |
+| `JOBLODE_EMBED_SIDECAR` | `<parquet>.emb.parquet` | Compact embedding sidecar for fast semantic search (see below). Auto-attached on startup if present. |
+| `JOBLODE_EMBED_DIM` | `256` | Truncated embedding dimension `build-sidecar` writes (Matryoshka prefix of the 1536-d vectors). |
 | `JOBLODE_RANK_PROVIDER` | *(unset)* | Set to `gemini` to enable the `match`/`pairwise` ranking methods. |
 | `GEMINI_API_KEY` | *(unset)* | Cheap-model key (override the var name with `JOBLODE_RANK_API_KEY_ENV`). |
 | `JOBLODE_RANK_MATCH_MODEL` | `gemini-2.5-flash` | Model for the absolute `match` pass. |
 | `JOBLODE_RANK_PAIR_MODEL` | `gemini-2.5-flash-lite` | Model for the `pairwise` pass. |
 | `JOBLODE_RANK_BASE_URL` | Gemini OpenAI-compatible endpoint | Override for an OpenAI-compatible base URL. |
-| `JOBLODE_EMBED_PROVIDER` | *(unset)* | Set to `openai` to enable `semantic_search` / `/api/semantic`. |
+| `JOBLODE_EMBED_PROVIDER` | *(unset)* | Set to `openai` to enable the semantic `query` in `search`. |
 | `OPENAI_API_KEY` | *(unset)* | Embeddings key (override the var name with `JOBLODE_EMBED_API_KEY_ENV`). |
 | `JOBLODE_EMBED_MODEL` | `text-embedding-3-small` | Query embedding model — must match the dataset's vectors (1536-d). |
 | `JOBLODE_EMBED_BASE_URL` | OpenAI `/v1` | Override for an OpenAI-compatible embeddings base URL. |
+| `SEARCHAPI_API_KEY` | *(unset)* | Enables the SearchAPI / Google Jobs live source (override the var name with `JOBLODE_SEARCHAPI_API_KEY_ENV`). |
+| `JOBLODE_SEARCHAPI_MAX_PAGES` | `5` | Page cap per Google Jobs search (each page is 10 results) — bounds cost/latency. |
+| `JOBLODE_SEARCHAPI_BASE_URL` | SearchAPI `/api/v1/search` | Override for the SearchAPI endpoint. |
 
 ## Notes & limits
 

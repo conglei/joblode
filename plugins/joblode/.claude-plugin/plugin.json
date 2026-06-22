@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "joblode",
+  "displayName": "joblode — agent job search",
+  "version": "0.1.0",
+  "description": "Search ~1M live roles by meaning, rank to a shortlist with a keyless taste ranker, and validate matches with 👍/👎 in an interactive card. Bundles the joblode MCP server and a job-search skill.",
+  "author": {
+    "name": "Conglei Shi",
+    "email": "conglei@stonefrontier.co"
+  },
+  "homepage": "https://github.com/conglei/joblode",
+  "repository": "https://github.com/conglei/joblode",
+  "license": "MIT",
+  "keywords": ["job-search", "mcp", "semantic-search", "ranking"],
+  "mcpServers": "./.mcp.json"
+}

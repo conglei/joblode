@@ -5,6 +5,7 @@
 # Node / web
 node_modules/
 web/dist/
+web/dist-app/
 .turbo/
 
 # Coverage / scan artifacts
@@ -19,6 +20,7 @@ results.sarif
 *.duckdb
 .env
 .env.*
+!.env.example
 resume.txt
 
 # OS / editor

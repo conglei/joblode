@@ -1,0 +1,16 @@
+{
+  "name": "joblode",
+  "owner": {
+    "name": "Conglei Shi",
+    "email": "conglei@stonefrontier.co"
+  },
+  "plugins": [
+    {
+      "name": "joblode",
+      "source": "./plugins/joblode",
+      "description": "Agent-driven job search over the open-jobs dataset: semantic search + a keyless taste ranker, with an interactive validate-with-👍/👎 results card.",
+      "version": "0.1.0",
+      "author": { "name": "Conglei Shi" }
+    }
+  ]
+}

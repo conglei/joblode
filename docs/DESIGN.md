@@ -1,6 +1,6 @@
 # Design: open-jobs as an MCP-native, agent-orchestrated job search
 
-Status: **implementation in progress — Phases 0–3 complete; Phase 4 ranking backend complete** · Owner: Conglei · Last updated: 2026-06-21
+Status: **implementation in progress — Phases 0–5 complete (4a semantic search; 5 MCP App UI); Phase 6 docs complete** · Owner: Conglei · Last updated: 2026-06-21
 
 This document is the architecture and phased implementation plan. Resolved decisions are recorded in
 §11; completed phases are marked in §8.
@@ -311,16 +311,35 @@ reaches parity.
   `text-embedding-3-small`, 1536-d) via a config-gated `EmbedClient`; exposed as the `semantic_search` MCP
   tool, `POST /api/semantic`, and a sidebar search box. (`list_cosine_similarity` rejects the parquet's
   nullable-element lists; the fixed-size `::FLOAT[1536]` array cast is required.)
+  - **Speedup — embedding sidecar (Matryoshka truncation).** Brute-force cosine over the full corpus is
+    CPU-bound (~5.8 min unfiltered on ~890k roles). `joblode-server build-sidecar` writes a compact
+    `id`+`FLOAT[256]` sidecar (`jd_embedding` truncated to its Matryoshka prefix; 758 MB vs 21 GB, ~42 s to
+    build). `JobStore::semantic_search` auto-uses it when attached — rank off the sidecar, fetch full rows for
+    the top-k — dropping the same query to **~2 s (~167×)**. Stays parquet-in-place (rebuild as part of the
+    daily refresh; no index/DB). Trade-off: jd-only ranking vs the multi-variant brute-force path. Further
+    layers (int8, binary+rerank, HNSW) noted in §6. Per-request `tracing` (`tower-http` `TraceLayer` +
+    `embed_ms`/`query_ms`/`sidecar` on each query) makes the cost visible.
 - **Phase 4b — embedding recall + distilled ranker (optional, `nalgebra`).** Richer than the shipped Rocchio
   taste ranker: port `rank.py` (lexical-seed ridge ranker in embedding space) and `btrank --distill` (PCA +
   logistic over embeddings → score the whole corpus with no LLM calls). *Tests:* recovers a planted signal;
   parity with the Python oracle on the fixture (within tolerance). Build when wanted.
-- **Phase 5 — MCP App UI.** Declare `_meta.ui.resourceUri`; serve the React bundle as a `ui://` resource;
-  the iframe calls tools via the App bridge. *Tests:* resource payload shape/mime; the React data-source
-  adapter (bridge vs http); JSON in the tool result regardless.
-- **Phase 6 — Orchestration enablement (docs, not backend).** An MCP usage guide + example Claude prompts
-  for the full flow (criteria → search → rank → LinkedIn intros → spreadsheet). The LinkedIn/sheet steps
-  are Claude's browser + skills; we ship guidance and verify the tools they call behave.
+- **Phase 5 — MCP App UI — complete.** The result-returning tools (`search_jobs`, `semantic_search`,
+  `rank_jobs`) carry `_meta.ui.resourceUri = ui://joblode/app`, and the server serves that bundle as a
+  standard MCP resource (`text/html;profile=mcp-app`), read from `web/dist-app/index.html` (`JOBLODE_APP_HTML`).
+  One React build emits two outputs: the multi-file standalone web app (`web/dist`) and the single-file App
+  bundle (`vite-plugin-singlefile` → `web/dist-app`). `web/src/api.ts` is now a swappable `DataSource` seam —
+  the HTTP adapter (standalone) or an MCP App **bridge** over `@modelcontextprotocol/ext-apps` (`tools/call`
+  via postMessage), selected at boot by `inMcpApp()`; components are unchanged. *Tests:* server cases for the
+  resource list/read shape + mime and the tools' `_meta.ui` link (and `get_job` carrying none); web cases for
+  the bridge source's tool-name/arg marshaling, the structured-content unwrap + error path, and the
+  source-selection/dispatch swap. Structured JSON remains in every tool result regardless of host UI support.
+  *(Follow-up, not blocking: seed the iframe's first render from the host-pushed `ontoolresult` so a
+  Claude-initiated search shows immediately, rather than after the first in-iframe search.)*
+- **Phase 6 — Orchestration enablement (docs, not backend) — complete.** [`docs/ORCHESTRATION.md`](ORCHESTRATION.md)
+  is the agent playbook for the full flow (narrow → search/semantic → rank → read → LinkedIn intros →
+  spreadsheet) with copy-paste prompts and the us-vs-Claude boundary; [`docs/MCP.md`](MCP.md) covers
+  install/connect and building/serving the web + MCP App UI. The LinkedIn/sheet steps are Claude's browser +
+  skills; we ship guidance and the tools they call.
 
 ---
 

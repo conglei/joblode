@@ -10,7 +10,7 @@ import {
   Title,
 } from "@mantine/core";
 
-import { rankJobs, searchJobs, semanticSearch } from "./api";
+import { rankJobs, search } from "./api";
 import { FilterSidebar } from "./components/FilterSidebar";
 import { JobDrawer } from "./components/JobDrawer";
 import { RankPanel, type RankMethod } from "./components/RankPanel";
@@ -27,7 +27,7 @@ import type {
 
 /** The standalone web UI: one search (hard filters + optional semantic query), a
  *  results table, a detail drawer, and a feedback-driven ranking pass — all over
- *  the REST API. The same components serve the MCP App in Phase 5. */
+ *  the REST API. Inside an MCP App, the compact {@link McpApp} renders instead. */
 export function App() {
   const [results, setResults] = useState<SearchResults | null>(null);
   // Set when the last search carried a semantic query: similarity by id.
@@ -48,8 +48,8 @@ export function App() {
   const latestSearchId = useRef(0);
   const latestRankId = useRef(0);
 
-  /** One search: semantic (ranked by meaning) when `query` is set, else a plain
-   *  hard-filter search. */
+  /** One search: hard filters plus a semantic `query` when set. With a query, rows
+   *  carry a similarity `score`, which we surface as the table's score column. */
   async function runSearch(params: SearchParams, query: string) {
     const searchId = ++latestSearchId.current;
     ++latestRankId.current; // invalidate any in-flight rank call against the old set
@@ -59,24 +59,20 @@ export function App() {
     setRankLoading(false);
     setRankError(null);
     try {
-      if (query.length > 0) {
-        const hits = await semanticSearch({ ...params, query });
-        if (searchId !== latestSearchId.current) return;
-        setResults({ total: hits.results.length, results: hits.results });
-        setSearchScores(
-          Object.fromEntries(
-            hits.results.map((hit) => [
-              hit.id,
-              { id: hit.id, score: Math.round(hit.score * 100), why: "" },
-            ]),
-          ),
-        );
-      } else {
-        const next = await searchJobs(params);
-        if (searchId !== latestSearchId.current) return;
-        setResults(next);
-        setSearchScores(undefined);
-      }
+      const next = await search(query.length > 0 ? { ...params, query } : params);
+      if (searchId !== latestSearchId.current) return;
+      setResults(next);
+      const scored = next.results.filter((row) => row.score !== undefined);
+      setSearchScores(
+        scored.length > 0
+          ? Object.fromEntries(
+              scored.map((row) => [
+                row.id,
+                { id: row.id, score: Math.round((row.score ?? 0) * 100), why: "" },
+              ]),
+            )
+          : undefined,
+      );
     } catch (cause: unknown) {
       if (searchId !== latestSearchId.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
