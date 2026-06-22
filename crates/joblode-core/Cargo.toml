@@ -9,3 +9,4 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+duckdb = { version = "1.10504.0", features = ["bundled", "parquet"] }
