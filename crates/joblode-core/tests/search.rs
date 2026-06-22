@@ -80,6 +80,19 @@ fn combines_title_and_company_filters() {
 }
 
 #[test]
+fn accepts_multiple_values_within_search_criteria() {
+    let (ids, total) = search(Criteria {
+        functions: vec!["engineering".into(), "product".into()],
+        levels: vec!["Mid".into(), "Staff".into()],
+        cities: vec!["San Francisco".into(), "Remote".into()],
+        ..Criteria::default()
+    });
+
+    assert_eq!(ids, ["city-region", "us-scope"]);
+    assert_eq!(total, 2);
+}
+
+#[test]
 fn treats_us_remote_scopes_as_us_jobs() {
     let (ids, total) = search(Criteria {
         country: Some("US".into()),
@@ -139,4 +152,13 @@ fn gets_a_job_with_its_full_description() {
     assert_eq!(job.company, "Acme");
     assert_eq!(job.title, "Backend Engineer");
     assert_eq!(job.jd_markdown, "# Backend Engineer");
+}
+
+#[test]
+fn returns_an_error_for_a_missing_job() {
+    let store = JobStore::open(fixture()).expect("fixture should open");
+
+    let result = store.get_job("not-a-real-job-id");
+
+    assert!(result.is_err());
 }
