@@ -9,29 +9,28 @@ import type {
   RankResults,
   SearchParams,
   SearchResults,
-  SemanticParams,
-  SemanticResults,
 } from "./types";
 
-/** The four reads every runtime provides, on identical request/response shapes. */
+/** The three reads every runtime provides, on identical request/response shapes. */
 export interface DataSource {
-  searchJobs(params: SearchParams): Promise<SearchResults>;
+  search(params: SearchParams): Promise<SearchResults>;
   getJob(id: string): Promise<Job>;
   rankJobs(params: RankParams): Promise<RankResults>;
-  semanticSearch(params: SemanticParams): Promise<SemanticResults>;
 }
 
 // — HTTP runtime: talks to the Rust server's REST API (`/api`). ———————————————
 
-/** Runs a hard-filter search. Throws on a non-2xx response. */
-async function httpSearchJobs(params: SearchParams): Promise<SearchResults> {
+/** Runs one search — filters, plus a semantic `query` when set. A 400 (e.g. a
+ *  query with no embeddings key) surfaces as a readable message. Throws on non-2xx. */
+async function httpSearch(params: SearchParams): Promise<SearchResults> {
   const response = await fetch("/api/search", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(params),
   });
   if (!response.ok) {
-    throw new Error(`search failed (${response.status})`);
+    const detail = (await response.text()).trim();
+    throw new Error(detail || `search failed (${response.status})`);
   }
   return response.json() as Promise<SearchResults>;
 }
@@ -60,29 +59,11 @@ async function httpRankJobs(params: RankParams): Promise<RankResults> {
   return response.json() as Promise<RankResults>;
 }
 
-/** Semantic search over role embeddings. The 400 from a missing embeddings key
- *  surfaces as a readable message. Throws on non-2xx. */
-async function httpSemanticSearch(
-  params: SemanticParams,
-): Promise<SemanticResults> {
-  const response = await fetch("/api/semantic", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  if (!response.ok) {
-    const detail = (await response.text()).trim();
-    throw new Error(detail || `semantic search failed (${response.status})`);
-  }
-  return response.json() as Promise<SemanticResults>;
-}
-
 /** The default runtime: the REST adapter. */
 export const httpSource: DataSource = {
-  searchJobs: httpSearchJobs,
+  search: httpSearch,
   getJob: httpGetJob,
   rankJobs: httpRankJobs,
-  semanticSearch: httpSemanticSearch,
 };
 
 // — MCP App bridge runtime: calls our tools over postMessage (inside Claude). ——
@@ -129,10 +110,9 @@ export function createBridgeSource(bridge: ToolBridge): DataSource {
     return unwrap<T>(result, name);
   };
   return {
-    searchJobs: (params) => call("search_jobs", params),
+    search: (params) => call("search", params),
     getJob: (id) => call("get_job", { id }),
     rankJobs: (params) => call("rank_jobs", params),
-    semanticSearch: (params) => call("semantic_search", params),
   };
 }
 
@@ -151,8 +131,6 @@ export function setActiveSource(source: DataSource): void {
   active = source;
 }
 
-export const searchJobs = (params: SearchParams) => active.searchJobs(params);
+export const search = (params: SearchParams) => active.search(params);
 export const getJob = (id: string) => active.getJob(id);
 export const rankJobs = (params: RankParams) => active.rankJobs(params);
-export const semanticSearch = (params: SemanticParams) =>
-  active.semanticSearch(params);

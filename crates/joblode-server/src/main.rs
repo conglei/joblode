@@ -2,7 +2,7 @@
 //! Claude Desktop/Code) and, over HTTP, the MCP transport (`/mcp`), the REST API
 //! (`/api`), and the React build (static, with an SPA fallback).
 //!
-//! Tools: `search_jobs`, `get_job`, `rank_jobs`, and `semantic_search`. Over HTTP
+//! Tools: `search` (filters + optional semantic query), `get_job`, `rank_jobs`. Over HTTP
 //! it also serves the MCP App `ui://` bundle (`web/dist-app`) and the standalone
 //! React build (`web/dist`); see `docs/DESIGN.md` §7.
 //!
@@ -20,7 +20,7 @@ mod dto;
 mod http;
 mod mcp;
 mod ranking;
-mod semantic;
+mod search;
 
 use std::sync::{Arc, Mutex};
 

@@ -1,6 +1,6 @@
 ---
 name: job-search
-description: Run an agent-driven job hunt over the joblode dataset (~1M live roles). Use when the user wants to find jobs, search roles by description, shortlist/rank matches, validate roles with thumbs up/down, or track applications. Drives the joblode MCP tools (search_jobs, semantic_search, rank_jobs, get_job).
+description: Run an agent-driven job hunt over the joblode dataset (~1M live roles). Use when the user wants to find jobs, search roles by description, shortlist/rank matches, validate roles with thumbs up/down, or track applications. Drives the joblode MCP tools (search, rank_jobs, get_job).
 ---
 
 # joblode — agent job search
@@ -12,11 +12,10 @@ them.
 
 ## Tools
 
-- **`search_jobs`** — hard filters (function, level, title, company, city, country,
-  `min_comp`) → a total count + compact rows. The hull filter; no key needed.
-- **`semantic_search`** — match a free-text *description of the work* against role
-  embeddings by meaning, under the same filters. Use when the structured fields
-  don't filter cleanly. Needs an embeddings key.
+- **`search`** — one search, two match modes: hard filters (function, level, title,
+  company, city, country, `min_comp`) for keyword/structured match, **plus an optional
+  `query`** for semantic match against the job description. Filter-only needs no key;
+  a `query` orders by similarity and attaches a `score` (needs an embeddings key).
 - **`rank_jobs`** — the **finalization** step. Once the criteria are settled, rank the
   **whole** matching set into an ordered shortlist `{id, score, why}` by the user's
   taste — learned **for free** from `feedback: [{id, label}]` (`liked`/`disliked`).
@@ -43,7 +42,7 @@ each. Surface a **small batch (~8–10)**, learn, adjust.
 
 1. **Narrow.** Talk to the user; converge on hard filters (and a one-line description of
    the work if it's fuzzy). Don't guess silently — confirm the filters.
-2. **Search.** `search_jobs` for clean filters, or `semantic_search` when meaning
+2. **Search.** `search` — filters for clean criteria, plus a `query` when meaning
    matters. Show a small batch — not a card per criterion.
 3. **Validate.** Present that batch and invite 👍/👎 (the user reacts in the card, or
    tell me which look good). A handful of reactions is plenty.

@@ -1,7 +1,7 @@
 # joblode plugin
 
 Packages joblode for one-step install in Claude Code: the **joblode MCP server**
-(`search_jobs`, `semantic_search`, `rank_jobs`, `get_job` + the interactive results
+(`search`, `rank_jobs`, `get_job` + the interactive results
 card) plus a **job-search skill** and a `/job-search` command.
 
 ## Install

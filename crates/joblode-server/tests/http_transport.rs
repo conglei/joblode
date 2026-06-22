@@ -107,16 +107,16 @@ async fn http_transport_serves_the_mcp_handshake_and_search() {
         .expect("notifications/initialized");
     assert!(ack.status().is_success());
 
-    // Call search_jobs and confirm the fixture's known total comes back over SSE.
+    // Call search and confirm the fixture's known total comes back over SSE.
     let search = client
         .post(&url)
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", &session)
-        .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_jobs","arguments":{"cities":["san francisco"]}}}"#)
+        .body(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"cities":["san francisco"]}}}"#)
         .send()
         .await
-        .expect("tools/call search_jobs");
+        .expect("tools/call search");
     let body = search.text().await.expect("search response body");
 
     // The fixture has exactly 3 San Francisco roles (see mcp.rs in-process tests).

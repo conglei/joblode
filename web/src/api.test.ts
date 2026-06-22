@@ -6,8 +6,7 @@ import {
   httpSource,
   inMcpApp,
   rankJobs,
-  searchJobs,
-  semanticSearch,
+  search,
   setActiveSource,
   type ToolBridge,
 } from "./api";
@@ -44,24 +43,28 @@ function fakeBridge(result: {
   };
 }
 
-describe("searchJobs", () => {
-  it("POSTs the criteria as JSON and returns the results", async () => {
+describe("search", () => {
+  it("POSTs filters (and an optional query) as JSON and returns the results", async () => {
     const results = { total: 0, results: [] };
     const fetchMock = mockFetch(results);
 
-    expect(await searchJobs({ cities: ["sf"] })).toEqual(results);
+    expect(await search({ cities: ["sf"], query: "ml pipelines" })).toEqual(
+      results,
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/search",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ cities: ["sf"] }),
+        body: JSON.stringify({ cities: ["sf"], query: "ml pipelines" }),
       }),
     );
   });
 
-  it("throws on a non-2xx response", async () => {
-    mockFetch({}, false, 500);
-    await expect(searchJobs({})).rejects.toThrow("search failed (500)");
+  it("surfaces the server's error (e.g. a query with no embeddings key)", async () => {
+    mockFetch("a semantic query requires a configured embeddings model", false, 400);
+    await expect(search({ query: "x" })).rejects.toThrow(
+      "requires a configured embeddings model",
+    );
   });
 });
 
@@ -104,36 +107,15 @@ describe("rankJobs", () => {
   });
 });
 
-describe("semanticSearch", () => {
-  it("POSTs the query + filters and returns hits", async () => {
-    const hits = { results: [{ id: "a", score: 0.91 }] };
-    const fetchMock = mockFetch(hits);
-
-    const params = { query: "ml pipelines", functions: ["data"] };
-    expect(await semanticSearch(params)).toEqual(hits);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/semantic",
-      expect.objectContaining({ method: "POST", body: JSON.stringify(params) }),
-    );
-  });
-
-  it("surfaces the server's error (e.g. no embeddings key)", async () => {
-    mockFetch("semantic search requires a configured embeddings model", false, 400);
-    await expect(semanticSearch({ query: "x" })).rejects.toThrow(
-      "requires a configured embeddings model",
-    );
-  });
-});
-
 describe("createBridgeSource", () => {
   it("calls the named tool with the params and returns its structured content", async () => {
     const results = { total: 1, results: [{ id: "a" }] };
     const bridge = fakeBridge({ structuredContent: results });
     const source = createBridgeSource(bridge);
 
-    expect(await source.searchJobs({ cities: ["sf"] })).toEqual(results);
+    expect(await source.search({ cities: ["sf"] })).toEqual(results);
     expect(bridge.calls).toEqual([
-      { name: "search_jobs", arguments: { cities: ["sf"] } },
+      { name: "search", arguments: { cities: ["sf"] } },
     ]);
   });
 
@@ -159,9 +141,7 @@ describe("createBridgeSource", () => {
 
   it("throws when a result carries no structured content", async () => {
     const source = createBridgeSource(fakeBridge({}));
-    await expect(source.semanticSearch({ query: "x" })).rejects.toThrow(
-      "semantic_search failed",
-    );
+    await expect(source.search({ query: "x" })).rejects.toThrow("search failed");
   });
 });
 
@@ -176,9 +156,9 @@ describe("source selection", () => {
     const bridge = fakeBridge({ structuredContent: results });
     setActiveSource(createBridgeSource(bridge));
 
-    expect(await searchJobs({ titles: ["eng"] })).toEqual(results);
+    expect(await search({ titles: ["eng"] })).toEqual(results);
     expect(bridge.calls[0]).toEqual({
-      name: "search_jobs",
+      name: "search",
       arguments: { titles: ["eng"] },
     });
   });

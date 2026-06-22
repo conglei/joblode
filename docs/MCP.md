@@ -7,24 +7,21 @@ dataset (~1M live roles) from a conversation. For architecture and the roadmap, 
 For the full agent-driven workflow (narrow → search → rank → intros → track) and copy-paste prompts, see
 [ORCHESTRATION.md](ORCHESTRATION.md).
 
-The server exposes four MCP tools:
+The server exposes three MCP tools, in two stages — **explore** (search) and **finalize** (rank):
 
-- **`search_jobs`** — hard filters (function, level, title, company, city, country, min comp) → a total
+- **`search`** — one search, two match modes: hard filters (function, level, title, company, city,
+  country, min comp) for keyword/structured match, **plus an optional `query`** for semantic match against
+  the job description (best of title / JD / alternate titles, by cosine similarity). Filter-only needs no
+  key; a `query` orders by similarity and attaches a `score`, and **requires an embeddings key**. Returns a
   match count plus compact rows (`limit`-capped, default 50).
+- **`rank_jobs`** — the finalization step: orders the **whole** matching set into a shortlist
+  `{id, score, why}` by the user's taste, learned **for free** from `feedback` (`[{id, label}]`,
+  `liked`/`applied`/… or `disliked`/`rejected`/…). No resume needed; default `top` 25 (ask for ~100). A
+  cheap-model refine (`method: "match"`/`"pairwise"`, needs a key + `resume`) is optional and much slower.
 - **`get_job`** — one role by `id`, including its full `jd_markdown`.
-- **`rank_jobs`** — reduces a candidate set to a compact, ordered shortlist `{id, score, why}` so the
-  cloud model reads dozens of rows, not thousands. Draws candidates by the same filters (or explicit
-  `ids`), orders them **for free** against prior `feedback` (`[{id, label}]`, where label is
-  `liked`/`applied`/… or `disliked`/`rejected`/…), and — if a cheap model is configured — refines the
-  top with `method: "match"` or `"pairwise"` (these also need a `resume`). Without a key, the free
-  feedback-driven ranking still works.
-- **`semantic_search`** — matches a free-text `query` (a description of the role/responsibilities) against
-  role embeddings by cosine similarity, scoring each role by its **best-matching variant** (title, JD, or
-  an alternate title) — useful when the messy structured fields don't filter cleanly. Takes the same hard
-  filters; returns compact rows with a `score`. **Requires an embeddings key** (see config).
 
-When a host supports MCP Apps, the result-returning tools (`search_jobs`, `semantic_search`, `rank_jobs`)
-also render an **interactive results table** in the conversation — see [Run the web UI](#run-the-web-ui-optional).
+When a host supports MCP Apps, the result-returning tools (`search`, `rank_jobs`) also render an
+**interactive results table** in the conversation — see [Run the web UI](#run-the-web-ui-optional).
 
 ## 1. Get the dataset
 
@@ -114,7 +111,7 @@ Once connected, drive it from the conversation — for example:
 - "Filter to San Francisco, product function, comp floor 180k."
 - "Open the full description for that third result."
 
-Claude calls `search_jobs` to draw the candidate set, then `get_job` for the roles you want to read in
+Claude calls `search` to draw the candidate set, then `get_job` for the roles you want to read in
 full. Structured fields are LLM extractions — confirm comp, work authorization, and location against
 `jd_markdown`, and use the `url` (the only apply link) to apply.
 
@@ -185,7 +182,7 @@ to `.env` and fill in keys (real environment variables take precedence).
 | `JOBLODE_RANK_MATCH_MODEL` | `gemini-2.5-flash` | Model for the absolute `match` pass. |
 | `JOBLODE_RANK_PAIR_MODEL` | `gemini-2.5-flash-lite` | Model for the `pairwise` pass. |
 | `JOBLODE_RANK_BASE_URL` | Gemini OpenAI-compatible endpoint | Override for an OpenAI-compatible base URL. |
-| `JOBLODE_EMBED_PROVIDER` | *(unset)* | Set to `openai` to enable `semantic_search` / `/api/semantic`. |
+| `JOBLODE_EMBED_PROVIDER` | *(unset)* | Set to `openai` to enable the semantic `query` in `search`. |
 | `OPENAI_API_KEY` | *(unset)* | Embeddings key (override the var name with `JOBLODE_EMBED_API_KEY_ENV`). |
 | `JOBLODE_EMBED_MODEL` | `text-embedding-3-small` | Query embedding model — must match the dataset's vectors (1536-d). |
 | `JOBLODE_EMBED_BASE_URL` | OpenAI `/v1` | Override for an OpenAI-compatible embeddings base URL. |

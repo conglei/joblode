@@ -38,9 +38,25 @@ pub struct SearchParams {
     /// Minimum annual compensation in thousands (keeps unknown comp).
     #[serde(default)]
     pub min_comp: Option<f64>,
+    /// Optional free-text description of the work. When set, results are ordered by
+    /// semantic similarity of this query to each role (best of title / JD / alternate
+    /// titles), under the same hard filters. Needs a configured embeddings model.
+    #[serde(default)]
+    pub query: Option<String>,
     /// Max rows to return (default 50). Does not affect `total`.
     #[serde(default)]
     pub limit: Option<usize>,
+}
+
+impl SearchParams {
+    /// The trimmed semantic query, if a non-empty one was given.
+    #[must_use]
+    pub fn semantic_query(&self) -> Option<&str> {
+        self.query
+            .as_deref()
+            .map(str::trim)
+            .filter(|query| !query.is_empty())
+    }
 }
 
 impl SearchParams {
@@ -111,13 +127,27 @@ impl From<&Job> for JobSummary {
     }
 }
 
-/// `search_jobs` result: the full match count plus a capped page of rows.
+/// One search row: a compact summary, plus a similarity `score` when the search
+/// carried a semantic `query` (omitted for a plain keyword/filter search).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SearchHit {
+    #[serde(flatten)]
+    pub summary: JobSummary,
+    /// Best-variant cosine similarity to the query in `[-1, 1]`, when `query` was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
+}
+
+/// `search` result: the match count plus a capped page of rows. With a semantic
+/// `query`, rows are ordered by similarity and carry a `score`; otherwise it's a
+/// plain filter page and `total` is the full match count.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SearchResults {
-    /// Total matching roles before `limit` is applied.
+    /// Matching roles (the full count for a filter search; the returned count for a
+    /// semantic query).
     pub total: usize,
     /// Compact rows, capped at `limit`. Call `get_job` for the full description.
-    pub results: Vec<JobSummary>,
+    pub results: Vec<SearchHit>,
 }
 
 /// One prior user reaction to a recommended role — the feedback-loop signal.
@@ -173,31 +203,6 @@ pub struct RankParams {
 pub struct RankResults {
     /// Ranked rows, best first. Call `get_job` for a role's full description.
     pub results: Vec<Ranked>,
-}
-
-/// `semantic_search` input: a free-text query plus the same hard filters.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SemanticParams {
-    /// Free-text description of the roles/responsibilities to match.
-    pub query: String,
-    /// Hard filters applied before the similarity ranking.
-    #[serde(flatten)]
-    pub filter: SearchParams,
-}
-
-/// One semantic hit: a compact row plus its 0–1 cosine similarity.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct SemanticHit {
-    #[serde(flatten)]
-    pub summary: JobSummary,
-    /// Best-variant cosine similarity to the query, in `[-1, 1]`.
-    pub score: f32,
-}
-
-/// `semantic_search` result: rows ordered by similarity, best first.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct SemanticResults {
-    pub results: Vec<SemanticHit>,
 }
 
 #[cfg(test)]

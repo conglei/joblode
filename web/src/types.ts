@@ -1,7 +1,8 @@
 /** Wire types mirroring the Rust `dto` / `joblode_core::Job`. Keep in sync with
  *  `crates/joblode-server/src/dto.rs`. */
 
-/** Hard search filters plus a row cap. Every field is optional. */
+/** One search, two match modes: hard filters (keyword/structured) plus an optional
+ *  `query` for semantic match against the JD. Every field is optional. */
 export interface SearchParams {
   functions?: string[];
   levels?: string[];
@@ -10,6 +11,8 @@ export interface SearchParams {
   cities?: string[];
   country?: string | null;
   min_comp?: number | null;
+  /** Free-text description of the work — orders results by JD similarity when set. */
+  query?: string;
   limit?: number;
 }
 
@@ -28,10 +31,16 @@ export interface JobSummary {
   url: string;
 }
 
-/** `search` result: the full match count plus a capped page of rows. */
+/** One search row: a compact summary, plus a similarity `score` when the search
+ *  carried a semantic `query` (absent for a plain filter search). */
+export interface SearchHit extends JobSummary {
+  score?: number;
+}
+
+/** `search` result: the match count plus a capped page of rows. */
 export interface SearchResults {
   total: number;
-  results: JobSummary[];
+  results: SearchHit[];
 }
 
 /** The full record returned by `get_job`, including the description. */
@@ -76,17 +85,3 @@ export interface RankResults {
   results: Ranked[];
 }
 
-/** `semantic` input: a free-text query plus the same hard filters. */
-export interface SemanticParams extends SearchParams {
-  query: string;
-}
-
-/** One semantic hit: a compact row plus its cosine similarity in [-1, 1]. */
-export interface SemanticHit extends JobSummary {
-  score: number;
-}
-
-/** `semantic` result: rows ordered by similarity, best first. */
-export interface SemanticResults {
-  results: SemanticHit[];
-}

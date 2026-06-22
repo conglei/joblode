@@ -1,5 +1,5 @@
-//! The joblode MCP server: `search_jobs`, `get_job`, `rank_jobs`, and
-//! `semantic_search` tools over a shared [`JobStore`] (plus optional cheap-model
+//! The joblode MCP server: `search` (filters + optional semantic query), `get_job`,
+//! and `rank_jobs` tools over a shared [`JobStore`] (plus optional embed/cheap-model
 //! clients). Every tool returns structured JSON; the result-returning tools also
 //! carry `_meta.ui.resourceUri` and the server serves the matching `ui://` MCP App
 //! resource (the interactive table) — see [`crate::app_ui`] and `docs/DESIGN.md` §7.
@@ -22,17 +22,14 @@ use rmcp::{
 use serde::Deserialize;
 
 use crate::app_ui;
-use crate::dto::{
-    JobSummary, RankParams, RankResults, SearchParams, SearchResults, SemanticParams,
-    SemanticResults,
-};
+use crate::dto::{RankParams, RankResults, SearchParams, SearchResults};
 use crate::ranking::{self, RankError};
-use crate::semantic;
+use crate::search;
 
 /// Tools whose results render in the MCP App table; tagged with `_meta.ui` so a
 /// host fetches and renders the `ui://` bundle. `get_job` is detail-only (the
 /// drawer is reached from the table), so it carries no UI link.
-const UI_TOOLS: &[&str] = &["search_jobs", "semantic_search", "rank_jobs"];
+const UI_TOOLS: &[&str] = &["search", "rank_jobs"];
 
 /// Identifies one role for [`JobServer::get_job`].
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -66,7 +63,7 @@ impl std::fmt::Debug for JobServer {
 #[tool_router]
 impl JobServer {
     /// Builds a server backed by `store`. `model` gates the `match`/`pairwise`
-    /// ranking methods; `embed` gates `semantic_search`. Both `None` is fine —
+    /// ranking methods; `embed` gates the semantic `query`. Both `None` is fine —
     /// search, get_job, and free feedback ranking still work.
     #[must_use]
     pub fn new(
@@ -83,28 +80,19 @@ impl JobServer {
     }
 
     #[tool(
-        description = "EXPLORE (refine criteria). Search live roles by hard filters (function, level, title, company, city, country, min comp). Use this to surface a page of matches for you and the user to react to, then adjust the filters and search again until the criteria are right — then hand off to rank_jobs to order the whole set. Returns a total match count and compact rows; call get_job for a role's full description."
+        description = "EXPLORE (refine criteria). One search with two match modes: hard filters (function, level, title, company, city, country, min comp) for keyword/structured match, AND an optional `query` for semantic match against the job description. Use it to surface a page of matches for you and the user to react to, then adjust the filters/query and search again until the criteria are right — then hand off to rank_jobs to order the whole set. With a `query`, rows are ordered by similarity and carry a `score` (needs an embeddings key); without one it's a plain filter page. Call get_job for a role's full description."
     )]
-    async fn search_jobs(
+    async fn search(
         &self,
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<Json<SearchResults>, ErrorData> {
-        let criteria = params.criteria();
-        let limit = params.effective_limit();
-        let store = self.store.clone();
-
-        let (jobs, total) = tokio::task::spawn_blocking(move || {
-            store
-                .lock()
-                .expect("store mutex poisoned")
-                .search(&criteria, limit)
-        })
-        .await
-        .map_err(|error| ErrorData::internal_error(format!("search task failed: {error}"), None))?
-        .map_err(|error| ErrorData::internal_error(format!("search failed: {error}"), None))?;
-
-        let results = jobs.iter().map(JobSummary::from).collect();
-        Ok(Json(SearchResults { total, results }))
+        search::run(self.store.clone(), self.embed.clone(), params)
+            .await
+            .map(Json)
+            .map_err(|error| match error {
+                RankError::BadRequest(message) => ErrorData::invalid_params(message, None),
+                RankError::Internal(message) => ErrorData::internal_error(message, None),
+            })
     }
 
     #[tool(
@@ -137,22 +125,6 @@ impl JobServer {
         Parameters(params): Parameters<RankParams>,
     ) -> Result<Json<RankResults>, ErrorData> {
         ranking::run(self.store.clone(), self.model.clone(), params)
-            .await
-            .map(Json)
-            .map_err(|error| match error {
-                RankError::BadRequest(message) => ErrorData::invalid_params(message, None),
-                RankError::Internal(message) => ErrorData::internal_error(message, None),
-            })
-    }
-
-    #[tool(
-        description = "Semantic search over role embeddings: matches a free-text description of responsibilities to roles by cosine similarity (best of title / JD / alternate titles), cutting through messy structured fields. Supports the same hard filters. Requires a configured embeddings key. Returns compact rows with a similarity score."
-    )]
-    async fn semantic_search(
-        &self,
-        Parameters(params): Parameters<SemanticParams>,
-    ) -> Result<Json<SemanticResults>, ErrorData> {
-        semantic::run(self.store.clone(), self.embed.clone(), params)
             .await
             .map(Json)
             .map_err(|error| match error {
@@ -249,9 +221,10 @@ impl ServerHandler for JobServer {
         ))
         .with_instructions(
                 "joblode exposes the open-jobs dataset. Two stages, kept distinct: (1) EXPLORE with \
-                 search_jobs / semantic_search — surface a page of matches for you and the user to \
-                 react to, refine the hard filters from that feedback, and repeat until the criteria \
-                 are right. (2) FINALIZE with rank_jobs using those same filters — it orders the WHOLE \
+                 search — keyword/structured filters plus an optional semantic `query` against the JD; \
+                 surface a page of matches for you and the user to react to, refine the filters/query \
+                 from that feedback, and repeat until the criteria are right. (2) FINALIZE with \
+                 rank_jobs using those same filters — it orders the WHOLE \
                  matching set into a shortlist by the user's taste (learned for free from liked/disliked \
                  role ids; no resume needed). Then get_job for the full description of the few that \
                  matter. Don't dump 40-50 rows per criterion — surface a small batch, learn, rank, \
@@ -329,25 +302,25 @@ mod tests {
         let tools = client.list_all_tools().await.expect("list tools");
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
 
-        assert!(names.contains(&"search_jobs"), "tools: {names:?}");
+        assert!(names.contains(&"search"), "tools: {names:?}");
         assert!(names.contains(&"get_job"), "tools: {names:?}");
         assert!(names.contains(&"rank_jobs"), "tools: {names:?}");
-        assert!(names.contains(&"semantic_search"), "tools: {names:?}");
+        assert!(!names.contains(&"semantic_search"), "tools: {names:?}");
 
         client.cancel().await.ok();
     }
 
     #[tokio::test]
-    async fn search_jobs_returns_total_and_compact_rows() {
+    async fn search_returns_total_and_compact_rows() {
         let client = connect().await;
 
         let result = client
             .call_tool(call(
-                "search_jobs",
+                "search",
                 serde_json::json!({ "cities": ["san francisco"] }),
             ))
             .await
-            .expect("search_jobs");
+            .expect("search");
         let data = result.structured_content.expect("structured content");
 
         assert_eq!(data["total"], 3);
@@ -360,16 +333,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_jobs_caps_rows_but_reports_full_total() {
+    async fn search_caps_rows_but_reports_full_total() {
         let client = connect().await;
 
         let result = client
             .call_tool(call(
-                "search_jobs",
+                "search",
                 serde_json::json!({ "cities": ["san francisco"], "limit": 1 }),
             ))
             .await
-            .expect("search_jobs");
+            .expect("search");
         let data = result.structured_content.expect("structured content");
 
         assert_eq!(data["total"], 3);
@@ -478,7 +451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_search_orders_by_similarity_with_an_embedder() {
+    async fn search_with_a_query_orders_by_similarity_with_an_embedder() {
         // The embedder maps any query to the "engineering" direction → city-direct.
         let server = JobServer::new(
             rank_store(),
@@ -489,11 +462,11 @@ mod tests {
 
         let result = client
             .call_tool(call(
-                "semantic_search",
+                "search",
                 serde_json::json!({ "query": "backend systems engineering" }),
             ))
             .await
-            .expect("semantic_search");
+            .expect("search");
         let data = result.structured_content.expect("structured content");
         let rows = data["results"].as_array().expect("results array");
 
@@ -521,8 +494,7 @@ mod tests {
                 .map(str::to_string)
         };
 
-        assert_eq!(ui_for("search_jobs").as_deref(), Some(app_ui::APP_URI));
-        assert_eq!(ui_for("semantic_search").as_deref(), Some(app_ui::APP_URI));
+        assert_eq!(ui_for("search").as_deref(), Some(app_ui::APP_URI));
         assert_eq!(ui_for("rank_jobs").as_deref(), Some(app_ui::APP_URI));
         assert_eq!(ui_for("get_job"), None);
 
@@ -581,14 +553,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_search_errors_without_an_embedder() {
+    async fn search_with_a_query_errors_without_an_embedder() {
         let client = connect_with(JobServer::new(rank_store(), None, None)).await;
 
         let result = client
-            .call_tool(call(
-                "semantic_search",
-                serde_json::json!({ "query": "anything" }),
-            ))
+            .call_tool(call("search", serde_json::json!({ "query": "anything" })))
             .await;
 
         assert!(result.is_err());

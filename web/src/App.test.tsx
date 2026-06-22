@@ -4,14 +4,13 @@ import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import { getJob, rankJobs, searchJobs, semanticSearch } from "./api";
+import { getJob, rankJobs, search } from "./api";
 import type { Job, RankResults, SearchResults } from "./types";
 
 vi.mock("./api", () => ({
-  searchJobs: vi.fn(),
+  search: vi.fn(),
   getJob: vi.fn(),
   rankJobs: vi.fn(),
-  semanticSearch: vi.fn(),
 }));
 
 const summary = {
@@ -49,10 +48,9 @@ function renderApp() {
 
 describe("App", () => {
   beforeEach(() => {
-    vi.mocked(searchJobs).mockReset().mockResolvedValue(results);
+    vi.mocked(search).mockReset().mockResolvedValue(results);
     vi.mocked(getJob).mockReset().mockResolvedValue(job);
     vi.mocked(rankJobs).mockReset();
-    vi.mocked(semanticSearch).mockReset();
   });
 
   it("searches, lists rows, and opens a role's detail drawer", async () => {
@@ -62,7 +60,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     // The search ran and the row rendered.
-    expect(searchJobs).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledOnce();
     const row = await screen.findByText("Backend Engineer");
     expect(screen.getByText("1 matches")).toBeInTheDocument();
 
@@ -75,7 +73,7 @@ describe("App", () => {
   });
 
   it("shows an empty state when nothing matches", async () => {
-    vi.mocked(searchJobs).mockResolvedValue({ total: 0, results: [] });
+    vi.mocked(search).mockResolvedValue({ total: 0, results: [] });
     const user = userEvent.setup();
     renderApp();
 
@@ -86,7 +84,7 @@ describe("App", () => {
   });
 
   it("surfaces a search failure", async () => {
-    vi.mocked(searchJobs).mockRejectedValue(new Error("boom"));
+    vi.mocked(search).mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
     renderApp();
 
@@ -134,8 +132,9 @@ describe("App", () => {
     expect(screen.getByText(/Ranked 1 of 1/)).toBeInTheDocument();
   });
 
-  it("runs a semantic search from the unified form when a query is given", async () => {
-    vi.mocked(semanticSearch).mockResolvedValue({
+  it("passes the query to the unified search and shows similarity scores", async () => {
+    vi.mocked(search).mockResolvedValue({
+      total: 1,
       results: [{ ...summary, score: 0.91 }],
     });
     const user = userEvent.setup();
@@ -147,14 +146,12 @@ describe("App", () => {
     );
     await user.click(screen.getByRole("button", { name: "Search" }));
 
-    // A query routes the single Search through semantic, not plain search.
-    await waitFor(() => expect(semanticSearch).toHaveBeenCalledOnce());
-    expect(searchJobs).not.toHaveBeenCalled();
-    expect(vi.mocked(semanticSearch).mock.calls[0][0]).toMatchObject({
+    // The one search carries the query; scored rows surface as a score column.
+    await waitFor(() => expect(search).toHaveBeenCalledOnce());
+    expect(vi.mocked(search).mock.calls[0][0]).toMatchObject({
       query: "resilient backend services",
     });
 
-    // The hit renders with its similarity scaled to 0–100.
     expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
     expect(screen.getByText("91")).toBeInTheDocument();
   });
