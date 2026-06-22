@@ -1,8 +1,9 @@
 # Design: open-jobs as an MCP-native, agent-orchestrated job search
 
-Status: **draft for review** · Owner: Conglei · Last updated: 2026-06-21
+Status: **implementation in progress — Phases 0–1 complete** · Owner: Conglei · Last updated: 2026-06-22
 
-This document is the plan. No code until the "Decisions to confirm" section is settled.
+This document is the architecture and phased implementation plan. Resolved decisions are recorded in
+§11; completed phases are marked in §8.
 
 ---
 
@@ -103,7 +104,7 @@ same axum server as the web API). One core, both transports.
 
 | Tool | Input | Output | Notes |
 |---|---|---|---|
-| `search_jobs` | criteria (function, level, country, **city**, title, remote, min_comp, flags), `limit` | `{total, results[]}` compact rows + a UI resource | The hull filter. Sub-second. No key needed. |
+| `search_jobs` | criteria (function, level, country, **city**, title, company, remote, min_comp, flags), `limit` | `{total, results[]}` compact rows + a UI resource | The hull filter. Sub-second. No key needed. |
 | `get_job` | `id` | full record + `jd_markdown` | Lazy full detail for one role. |
 | `rank_jobs` | `resume`, criteria *or* `ids`, `method` (`match`\|`pairwise`), `top` | ranked shortlist `{id, score, why}` | **Only if a cheap model is configured.** Server does the work; returns a short list. |
 | `suggest_criteria` *(optional)* | `resume` | proposed criteria object | Helps Claude/the user narrow in step 1. Cheap-model call. |
@@ -155,7 +156,9 @@ unconfigured and `search_jobs` returns unranked.
 decision we made (DataFusion was the considered pure-Rust alternative — see end of section):
 - Reads the parquet **directly** with projection + predicate **pushdown** and row-group pruning — the same
   "only touch the columns/rows that matter" trick we proved in Python, but free and in SQL.
-- Our whole `search()` becomes one parameterized SQL query. The messy city filter is
+- Our whole `search()` is one parameterized SQL query. Title and company terms are case-insensitive
+  substring filters; multiple terms within one field are ORed, while different fields are ANDed.
+  Company searches both `company_name` and raw `company`. The messy city filter is
   `lower(city || ' ' || region || ' ' || location) LIKE '%san francisco%'`.
 - **`INSTALL httpfs`** lets it query the parquet straight off R2 (`FROM 'https://…/open-jobs.parquet'`) —
   this is what makes the "remote / zero-setup" refresh mode below trivial.
@@ -231,16 +234,18 @@ reaches parity.
 ## 8. TDD plan — phases, each contract-and-tests-first
 
 > Rhythm per phase: write the interface + failing tests → implement → green → refactor. Data tests use a
-> **small committed fixture parquet** (a few dozen hand-picked rows with known values). Model calls are
+> **small committed fixture parquet** (hand-picked rows with known values). Model calls are
 > **mocked** (deterministic fake comparator/scorer, as we did in the Python validation).
 
-- **Phase 0 — Monorepo skeleton.** flox toolchains (rust, node, duckdb), Cargo workspace, pnpm workspace,
-  Turbo pipeline, CI (build+lint+test). *Tests:* `turbo test` green on empty stubs (`cargo test`,
-  `vitest`); `turbo build` builds everything; `cargo clippy`/`fmt` clean.
-- **Phase 1 — `joblode-core` crate over DuckDB.** `search(Criteria) -> (Vec<Job>, usize)`,
-  `get_job(id) -> Result<Job>`. *Tests:* `#[test]` table cases over the fixture — city/function/level
-  filters, US-remote-scope special case, comp-floor sentinel handling, `(company,title)` dedup, empty
-  results. This is the spec; write it first.
+- **Phase 0 — Monorepo skeleton — complete.** flox toolchains (rust, node, duckdb), Cargo workspace,
+  pnpm workspace, Turbo pipeline, CI (build+lint+test). *Tests:* `turbo test` green on empty stubs
+  (`cargo test`, `vitest`); `turbo build` builds everything; `cargo clippy`/`fmt` clean.
+- **Phase 1 — `joblode-core` crate over DuckDB — complete.** `JobStore::open(parquet)`,
+  `search(&Criteria) -> Result<(Vec<Job>, usize)>`, and `get_job(id) -> Result<Job>`. The bundled
+  DuckDB build includes the Parquet extension, so local searches require no runtime extension install.
+  *Tests:* 11 integration cases over `testdata/fixture.parquet` cover city/function/level/title/company
+  filters, title+company composition, US-remote-scope matching, comp-floor sentinel handling,
+  case-insensitive `(company,title)` dedup, empty results, and full-JD retrieval.
 - **Phase 2 — MCP server (`rmcp`).** `search_jobs` + `get_job` tools (JSON only), stdio + HTTP. *Tests:*
   invoke tools through an in-process transport; assert result schema and that `get_job` returns the JD.
 - **Phase 3 — REST + SSE + React.** axum `/api/search`, `/api/job/:id`, serves the React build. *Tests:*
@@ -294,7 +299,7 @@ joblode/
     joblode-core/            # search / get / rank logic over DuckDB  (lib; tests inline + tests/)
     joblode-server/          # axum: REST + SSE + rmcp (stdio & HTTP) + ui:// resource  (bin)
     joblode-mcp/             # optional stdio-only MCP bin (same joblode-core)  [added when needed]
-    testdata/fixture.parquet
+  testdata/fixture.parquet   # tiny committed Phase 1 data fixture
   web/                        # React (Vite, TS) — one build: web UI + MCP App ui:// resource
 ```
 Turbo orchestrates the JS workspace (`web/`); Cargo builds the Rust workspace; CI runs both. **No Python

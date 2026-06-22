@@ -14,6 +14,7 @@ results.sarif
 
 # Data & secrets — never commit
 *.parquet
+!testdata/fixture.parquet
 *.duckdb
 .env
 .env.*
