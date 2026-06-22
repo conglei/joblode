@@ -49,6 +49,25 @@ async function boot() {
           subscribe={(onSeed) => {
             pushSeed = onSeed;
           }}
+          onPreference={(feedback) => {
+            // Record the user's running 👍/👎 in Claude's session so it persists
+            // and informs future searches/ranking (DESIGN §13). Fire-and-forget.
+            const liked = feedback.filter((f) => f.label === "liked").map((f) => f.id);
+            const disliked = feedback
+              .filter((f) => f.label === "disliked")
+              .map((f) => f.id);
+            void bridge.updateModelContext({
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "joblode taste feedback — the user reacted to roles in the results card. " +
+                    `Liked role ids: [${liked.join(", ")}]. Disliked role ids: [${disliked.join(", ")}]. ` +
+                    "Pass these as rank_jobs `feedback` (label liked/disliked) to personalize future searches.",
+                },
+              ],
+            });
+          }}
         />,
       );
       return;
