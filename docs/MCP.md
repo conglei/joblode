@@ -186,6 +186,9 @@ to `.env` and fill in keys (real environment variables take precedence).
 | `OPENAI_API_KEY` | *(unset)* | Embeddings key (override the var name with `JOBLODE_EMBED_API_KEY_ENV`). |
 | `JOBLODE_EMBED_MODEL` | `text-embedding-3-small` | Query embedding model — must match the dataset's vectors (1536-d). |
 | `JOBLODE_EMBED_BASE_URL` | OpenAI `/v1` | Override for an OpenAI-compatible embeddings base URL. |
+| `SEARCHAPI_API_KEY` | *(unset)* | Enables the SearchAPI / Google Jobs live source (override the var name with `JOBLODE_SEARCHAPI_API_KEY_ENV`). |
+| `JOBLODE_SEARCHAPI_MAX_PAGES` | `5` | Page cap per Google Jobs search (each page is 10 results) — bounds cost/latency. |
+| `JOBLODE_SEARCHAPI_BASE_URL` | SearchAPI `/api/v1/search` | Override for the SearchAPI endpoint. |
 
 ## Notes & limits
 

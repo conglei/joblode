@@ -21,6 +21,7 @@ mod http;
 mod mcp;
 mod ranking;
 mod search;
+mod searchapi;
 
 use std::sync::{Arc, Mutex};
 
@@ -68,11 +69,13 @@ async fn main() -> Result<()> {
     let store = Arc::new(Mutex::new(store));
     let model = build_model_client();
     let embed = build_embed_client();
+    let searchapi = build_searchapi_client();
     tracing::info!(
         transport = %mode,
         parquet = %parquet,
         ranking = model.is_some(),
         embeddings = embed.is_some(),
+        searchapi = searchapi.is_some(),
         "starting joblode-server"
     );
 
@@ -162,6 +165,24 @@ fn build_embed_client() -> Option<Arc<dyn EmbedClient>> {
     let model = std::env::var("JOBLODE_EMBED_MODEL").unwrap_or_default();
 
     Some(Arc::new(OpenAiEmbedder::new(api_key, base_url, model)))
+}
+
+/// Builds the SearchAPI (Google Jobs) client from env, or `None` when unconfigured.
+/// Enabled when `SEARCHAPI_API_KEY` is set (override the var name with
+/// `JOBLODE_SEARCHAPI_API_KEY_ENV`); base URL and the per-search page cap fall back
+/// to defaults (`JOBLODE_SEARCHAPI_BASE_URL`, `JOBLODE_SEARCHAPI_MAX_PAGES`).
+fn build_searchapi_client() -> Option<searchapi::SearchApiClient> {
+    let key_var = std::env::var("JOBLODE_SEARCHAPI_API_KEY_ENV")
+        .unwrap_or_else(|_| "SEARCHAPI_API_KEY".into());
+    let api_key = std::env::var(&key_var).ok().filter(|key| !key.is_empty())?;
+    let base_url = std::env::var("JOBLODE_SEARCHAPI_BASE_URL").unwrap_or_default();
+    let max_pages = std::env::var("JOBLODE_SEARCHAPI_MAX_PAGES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5);
+    Some(searchapi::SearchApiClient::new(
+        api_key, base_url, max_pages,
+    ))
 }
 
 /// Builds the cheap-model ranking client from env, or `None` when ranking is

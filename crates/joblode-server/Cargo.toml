@@ -45,10 +45,17 @@ dotenvy = "0.15"
 # stderr fmt subscriber filtered by `RUST_LOG` (env-filter).
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# External job-search source (SearchAPI / Google Jobs): HTTP + a stable cross-source
+# id (sha256 of the apply URL), URL cleaning, and relative-date parsing.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+sha2 = "0.10"
+url = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
-# Plain HTTP client for the streamable-HTTP transport test; no TLS needed for 127.0.0.1.
-reqwest = { version = "0.12", default-features = false }
 # SIGINT the spawned server so it shuts down gracefully (and flushes coverage).
 libc = "0.2"
 # `oneshot` the API router in handler tests without binding a socket.
