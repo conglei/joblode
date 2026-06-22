@@ -69,4 +69,35 @@ describe("App", () => {
       await screen.findByText("You will build resilient services."),
     ).toBeInTheDocument();
   });
+
+  it("shows an empty state when nothing matches", async () => {
+    vi.mocked(searchJobs).mockResolvedValue({ total: 0, results: [] });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(
+      await screen.findByText("No roles match these filters."),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces a search failure", async () => {
+    vi.mocked(searchJobs).mockRejectedValue(new Error("boom"));
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("Search failed")).toBeInTheDocument();
+    expect(screen.getByText("boom")).toBeInTheDocument();
+  });
+
+  it("surfaces a get_job failure in the drawer", async () => {
+    vi.mocked(getJob).mockRejectedValue(new Error("drawer boom"));
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(await screen.findByText("Backend Engineer"));
+    expect(await screen.findByText("drawer boom")).toBeInTheDocument();
+  });
 });

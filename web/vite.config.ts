@@ -20,6 +20,13 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**"],
+      // Entry/glue with no logic to assert: the mount point and test/type shims.
+      exclude: [
+        "src/main.tsx",
+        "src/test-setup.ts",
+        "src/vite-env.d.ts",
+        "src/**/*.test.{ts,tsx}",
+      ],
     },
   },
 });
