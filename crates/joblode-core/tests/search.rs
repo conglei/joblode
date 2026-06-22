@@ -6,9 +6,18 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixture.parquet")
 }
 
+/// Larger than the fixture, so the default helper returns every match.
+const ALL: usize = 1000;
+
 fn search(criteria: Criteria) -> (Vec<String>, usize) {
+    search_limited(criteria, ALL)
+}
+
+fn search_limited(criteria: Criteria, limit: usize) -> (Vec<String>, usize) {
     let store = JobStore::open(fixture()).expect("fixture should open");
-    let (jobs, total) = store.search(&criteria).expect("search should succeed");
+    let (jobs, total) = store
+        .search(&criteria, limit)
+        .expect("search should succeed");
     (jobs.into_iter().map(|job| job.id).collect(), total)
 }
 
@@ -131,6 +140,21 @@ fn deduplicates_company_and_title_case_insensitively() {
 }
 
 #[test]
+fn caps_returned_rows_but_reports_the_full_total() {
+    // Three SF roles match; a limit of 1 returns one row but the full total.
+    let (ids, total) = search_limited(
+        Criteria {
+            cities: vec!["san francisco".into()],
+            ..Criteria::default()
+        },
+        1,
+    );
+
+    assert_eq!(ids, ["city-direct"]);
+    assert_eq!(total, 3);
+}
+
+#[test]
 fn returns_empty_results() {
     let (ids, total) = search(Criteria {
         cities: vec!["Tokyo".into()],
@@ -147,6 +171,7 @@ fn gets_a_job_with_its_full_description() {
 
     let job = store
         .get_job("city-direct")
+        .expect("query should succeed")
         .expect("fixture job should exist");
 
     assert_eq!(job.company, "Acme");
@@ -155,10 +180,12 @@ fn gets_a_job_with_its_full_description() {
 }
 
 #[test]
-fn returns_an_error_for_a_missing_job() {
+fn returns_none_for_a_missing_job() {
     let store = JobStore::open(fixture()).expect("fixture should open");
 
-    let result = store.get_job("not-a-real-job-id");
+    let result = store
+        .get_job("not-a-real-job-id")
+        .expect("query should succeed");
 
-    assert!(result.is_err());
+    assert!(result.is_none());
 }

@@ -10,3 +10,5 @@ publish = false
 
 [dependencies]
 duckdb = { version = "1.10504.0", features = ["bundled", "parquet"] }
+serde = { version = "1", features = ["derive"] }
+schemars = "1"

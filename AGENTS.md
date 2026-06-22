@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes, plus joblode-specific context. Keep this file
 **lean** — it loads into every session. Architecture, decisions, and the phased plan live in
@@ -59,7 +59,7 @@ Transform tasks into verifiable goals:
 
 For multi-step tasks, state a brief plan:
 
-```
+```text
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
 3. [Step] → verify: [check]
@@ -114,7 +114,6 @@ CI gates on all of the above (plus coverage). Run them before pushing.
 
 ## Conventions
 
-- **Rust style & idioms: [docs/RUST.md](docs/RUST.md)** — read before non-trivial Rust work.
 - Rust: edition 2021, rustfmt-clean, clippy warning-free.
 - TS: strict `tsconfig`, ESLint flat config; keep the frontend minimal.
 - Prefer deterministic code (parsing, validation, sorting) over asking the model to "be careful."
