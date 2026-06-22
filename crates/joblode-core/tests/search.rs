@@ -6,6 +6,10 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixture.parquet")
 }
 
+fn rank_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/rank_fixture.parquet")
+}
+
 /// Larger than the fixture, so the default helper returns every match.
 const ALL: usize = 1000;
 
@@ -188,4 +192,23 @@ fn returns_none_for_a_missing_job() {
         .expect("query should succeed");
 
     assert!(result.is_none());
+}
+
+#[test]
+fn fetches_embeddings_for_known_ids_and_skips_unknown() {
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+
+    let map = store
+        .embeddings(&["city-direct", "city-location", "not-a-real-job-id"])
+        .expect("embeddings query should succeed");
+
+    assert_eq!(map.len(), 2, "unknown ids are omitted");
+    assert_eq!(map["city-direct"], vec![1.0, 0.0, 0.0, 0.0]);
+    assert_eq!(map["city-location"], vec![0.0, 1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn embeddings_of_no_ids_is_empty() {
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+    assert!(store.embeddings(&[]).expect("ok").is_empty());
 }

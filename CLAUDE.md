@@ -77,7 +77,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 Map:
 
-- `crates/joblode-core` — search / get / rank logic over DuckDB. Most behavior lives here.
+- `crates/joblode-core` — search / get over DuckDB (incl. `embeddings()`). Most data behavior lives here.
+- `crates/joblode-rank` — ranking: keyless taste ranker (Rocchio over embeddings, learned from feedback) + optional cheap-model `match`/`pairwise` refinement behind a `ModelClient` trait.
 - `crates/joblode-server` — axum: REST + SSE + MCP (stdio & HTTP) + the MCP App `ui://` resource.
 - `web/` — React (Vite, TS): the web UI and the MCP App resource, from one build.
 - `docs/DESIGN.md` — source of truth for architecture and the phase plan.

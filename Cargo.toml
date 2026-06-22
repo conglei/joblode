@@ -11,6 +11,7 @@ authors = ["Conglei Shi"]
 
 [workspace.dependencies]
 joblode-core = { path = "crates/joblode-core", version = "0.1.0" }
+joblode-rank = { path = "crates/joblode-rank", version = "0.1.0" }
 
 # Keep release builds lean and fast to link for a locally-run binary.
 [profile.release]

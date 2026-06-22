@@ -1,5 +1,6 @@
 //! DuckDB-backed search and retrieval over the open-jobs parquet dataset.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use duckdb::{params_from_iter, types::Value, Connection, Error, OptionalExt, Result, Row};
@@ -276,6 +277,60 @@ impl JobStore {
             )
             .optional()
     }
+
+    /// Fetches the `jd_embedding` vector for each of `ids` that exists in the
+    /// dataset. Ids with no row are simply omitted from the returned map.
+    ///
+    /// Embeddings are read as a delimited string (`array_to_string`) and parsed,
+    /// so this does not depend on the driver's array-column support.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or an embedding value can't be parsed
+    /// as a float.
+    pub fn embeddings(&self, ids: &[&str]) -> Result<HashMap<String, Vec<f32>>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT cast(id AS VARCHAR), array_to_string(jd_embedding, ',') \
+             FROM read_parquet(?) \
+             WHERE cast(id AS VARCHAR) IN ({placeholders})"
+        );
+
+        let mut parameters: Vec<Value> = Vec::with_capacity(ids.len() + 1);
+        parameters.push(Value::Text(self.parquet.clone()));
+        parameters.extend(ids.iter().map(|id| Value::Text((*id).to_owned())));
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(parameters), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut out = HashMap::with_capacity(ids.len());
+        for row in rows {
+            let (id, packed) = row?;
+            let vector = parse_embedding(&packed)
+                .map_err(|error| Error::ToSqlConversionFailure(Box::new(error)))?;
+            out.insert(id, vector);
+        }
+        Ok(out)
+    }
+}
+
+/// Parses a comma-delimited float string (from `array_to_string`) into a vector.
+fn parse_embedding(packed: &str) -> std::result::Result<Vec<f32>, std::num::ParseFloatError> {
+    if packed.is_empty() {
+        return Ok(Vec::new());
+    }
+    packed
+        .split(',')
+        .map(|value| value.trim().parse())
+        .collect()
 }
 
 fn add_exact_filter(

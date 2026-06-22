@@ -4,13 +4,19 @@ How to run the joblode MCP server locally and connect Claude to it so you can se
 dataset (~1M live roles) from a conversation. For architecture and the roadmap, see
 [DESIGN.md](DESIGN.md).
 
-The server exposes two MCP tools today:
+The server exposes three MCP tools today:
 
 - **`search_jobs`** — hard filters (function, level, title, company, city, country, min comp) → a total
   match count plus compact rows (`limit`-capped, default 50).
 - **`get_job`** — one role by `id`, including its full `jd_markdown`.
+- **`rank_jobs`** — reduces a candidate set to a compact, ordered shortlist `{id, score, why}` so the
+  cloud model reads dozens of rows, not thousands. Draws candidates by the same filters (or explicit
+  `ids`), orders them **for free** against prior `feedback` (`[{id, label}]`, where label is
+  `liked`/`applied`/… or `disliked`/`rejected`/…), and — if a cheap model is configured — refines the
+  top with `method: "match"` or `"pairwise"` (these also need a `resume`). Without a key, the free
+  feedback-driven ranking still works.
 
-Resume-aware ranking and the in-conversation React UI land in later phases (DESIGN §8).
+The in-conversation React UI lands in a later phase (DESIGN §8).
 
 ## 1. Get the dataset
 
@@ -109,12 +115,18 @@ full. Structured fields are LLM extractions — confirm comp, work authorization
 | Variable | Default | Meaning |
 |---|---|---|
 | `JOBLODE_PARQUET` | `open-jobs.parquet` (relative to the working dir) | Path to the dataset. Use an absolute path when launched by Claude. |
-| `JOBLODE_HTTP_ADDR` | `127.0.0.1:8000` | Bind address for the `http` transport. |
+| `JOBLODE_HTTP_ADDR` | `127.0.0.1:8000` | Bind address for the `http` transport (loopback only). |
 | *(argument)* | `stdio` | Transport: `stdio` or `http`. |
+| `JOBLODE_RANK_PROVIDER` | *(unset)* | Set to `gemini` to enable the `match`/`pairwise` ranking methods. |
+| `GEMINI_API_KEY` | *(unset)* | Cheap-model key (override the var name with `JOBLODE_RANK_API_KEY_ENV`). |
+| `JOBLODE_RANK_MATCH_MODEL` | `gemini-2.5-flash` | Model for the absolute `match` pass. |
+| `JOBLODE_RANK_PAIR_MODEL` | `gemini-2.5-flash-lite` | Model for the `pairwise` pass. |
+| `JOBLODE_RANK_BASE_URL` | Gemini OpenAI-compatible endpoint | Override for an OpenAI-compatible base URL. |
 
 ## Notes & limits
 
 - **Local file only for now.** Querying the dataset directly off remote object storage (DuckDB `httpfs`,
   DESIGN §5) isn't wired yet — point `JOBLODE_PARQUET` at a local file.
-- **No ranking yet.** `search_jobs` returns unranked rows; resume-aware ranking is a later phase.
+- **Ranking is config-gated.** The free, feedback-driven `rank_jobs` works with no key; the `match` and
+  `pairwise` methods need `JOBLODE_RANK_PROVIDER`/`GEMINI_API_KEY` and a `resume`.
 - **Server start re-validates the file.** A missing or unreadable parquet fails fast with a clear error.

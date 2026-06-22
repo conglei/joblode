@@ -1,6 +1,6 @@
 # Design: open-jobs as an MCP-native, agent-orchestrated job search
 
-Status: **implementation in progress — Phases 0–3 complete** · Owner: Conglei · Last updated: 2026-06-21
+Status: **implementation in progress — Phases 0–3 complete; Phase 4 ranking backend complete** · Owner: Conglei · Last updated: 2026-06-21
 
 This document is the architecture and phased implementation plan. Resolved decisions are recorded in
 §11; completed phases are marked in §8.
@@ -196,19 +196,45 @@ it's unnecessary for read-only Parquet.)
 
 ---
 
-## 6. Ranking layer (Gemini, config-gated)
+## 6. Ranking layer (config-gated)
 
-Port the two proven Python rankers to Rust (they're just HTTP + small math — `reqwest` + `serde`, no heavy deps):
-- **`match`** — per-role 0–100 + verdict + strengths/gaps (absolute; fast; streams).
-- **`pairwise`** — `langsort`-style "which fits better?" comparisons aggregated by Bradley-Terry
-  (`btrank`). Better calibrated; the project's preferred ranking.
+**Reframe (2026-06-21): the keyless embedding/feedback ranker is the primary
+token-saver; the cheap-model rankers are optional top-k polish.** The goal of this
+layer is to cut cloud token cost — we can't hand ~1000 candidates to the cloud
+model — while doing only what we must on our side. The cheapest reducer is *free*:
+the dataset already carries per-role embeddings (`jd_embedding`), so scoring an
+entire candidate set is one vector pass, no model calls. This also makes ranking
+work with **no API key at all**, which only the optional refinement needs. So we
+flip DESIGN's original 4/4b emphasis — the embedding ranker (was "4b, optional")
+is the backbone; LLM `match`/`pairwise` (was the headline) refine just the top.
 
-Both call the cheap model over Gemini's OpenAI-compatible endpoint. The **embedding-based recall**
-(`rank.py`'s lexical-seed → ridge ranker → score the corpus) and the **distilled corpus-wide taste**
-(`btrank --distill`: PCA + logistic regression over the job embeddings) also port to Rust — they're just
-linear algebra over the embeddings already in the parquet, read for the candidate set via DuckDB/arrow.
-Use **`nalgebra`** (pure Rust — SVD for the PCA, plus straightforward logistic/ridge + Bradley-Terry
-iterations) so we pull in **no BLAS/LAPACK system dependency**.
+**The funnel** (in `joblode-rank`):
+1. **Taste rank (free, keyless).** `TasteModel` learns a direction in embedding
+   space via Rocchio relevance feedback — `normalize(mean(liked) − β·mean(disliked))`
+   — and scores every candidate by cosine. No model calls; runs without a key.
+2. **Refine (cheap model, optional, top-k only).** On the top of the taste order:
+   - **`match`** — per-role 0–100 + one-line reason (absolute; one call each).
+   - **`pairwise`** — "which fits better?" comparisons over a small set, aggregated
+     by Bradley-Terry. Better calibrated; the project's preferred ranking.
+   Behind a `ModelClient` trait (mocked in tests; thin Gemini OpenAI-compatible
+   client in prod). Absent a key, ranking degrades cleanly to the taste order.
+
+**Feedback loop (criteria/taste fine-tuning).** Feedback *is* the taste training
+signal: liked/disliked role ids → their embeddings → the Rocchio direction. The
+server is **stateless** — Claude owns the durable feedback (the sheet/memory, §13)
+and passes it into `rank_jobs(feedback: [{id, label}])` each call; we hold nothing.
+This personalizes *ranking* immediately. Hard *filter* criteria still adjust
+conversationally (Claude's job). A future server-side `suggest_criteria(feedback)`
+could surface aggregate signal, but is deferred — keep our side lean.
+
+The shipped taste ranker uses Rocchio (centroid relevance feedback) — enough to
+personalize from a handful of labels, with no extra dependency. The richer
+variants from the Python tools — **embedding recall** (`rank.py`'s lexical-seed →
+ridge ranker → score the corpus) and the **distilled corpus-wide taste**
+(`btrank --distill`: PCA + logistic regression over the job embeddings) — remain a
+future upgrade; they're linear algebra over the embeddings already in the parquet
+and would pull in **`nalgebra`** (pure Rust SVD/logistic/ridge, no BLAS/LAPACK).
+Bradley-Terry (for the pairwise pass) is implemented directly, no `nalgebra` yet.
 
 **There is no Python in the running system.** The current scripts (`hull` / `rank` / `btrank` /
 `langsort` / `match`) stay in git history purely as a one-time **porting reference and test oracle** —
@@ -266,14 +292,22 @@ reaches parity.
   with ranking progress — streaming a single sub-second search query adds no value. The browser smoke is
   **React Testing Library + jsdom** rather than Playwright, to avoid shipping browser binaries into CI for
   one flow; a real Playwright pass can be added when the UI grows.
-- **Phase 4 — ranking (config-gated).** `joblode-rank` match + pairwise; `rank_jobs` tool; `rank` param on
-  search; SSE streaming for the web UI. *Tests:* mock the model client (trait + fake impl); assert (a)
-  pairwise recovers a planted order, (b) ranking disabled cleanly when no key, (c) token-shaped compact
-  output.
-- **Phase 4b — embedding recall + distilled ranker (optional, `nalgebra`).** Port `rank.py` (lexical-seed
-  ridge ranker in embedding space) and `btrank --distill` (PCA + logistic over embeddings → score the whole
-  corpus with no LLM calls). *Tests:* recovers a planted signal; parity with the Python oracle on the
-  fixture (within tolerance). Not needed for the core search→match→pairwise flow; build when wanted.
+- **Phase 4 — ranking backend (config-gated) — complete (reframed, see §6).** `joblode-rank` crate: a
+  keyless **taste** ranker (Rocchio over `jd_embedding`, learned from feedback) as the primary token-saver,
+  plus optional cheap-model **`match`** and **`pairwise`** (Bradley-Terry) refinement of the top-k behind a
+  `ModelClient` trait. `joblode-core` gains `embeddings(ids)`; `JobServer` gains the `rank_jobs` tool
+  (candidate source = filters or `ids`; `feedback: [{id,label}]` personalizes; method gated on a configured
+  key) returning compact `{id, score, why}`. Gemini OpenAI-compatible client wired from env
+  (`JOBLODE_RANK_PROVIDER`/`GEMINI_API_KEY`/…). *Tests:* 13 `joblode-rank` cases (taste recovers a planted
+  signal; feedback flips order; pairwise recovers a planted order; model methods error cleanly with no
+  client) + 3 `rank_jobs` server cases (free-with-feedback floats the liked role; match uses the configured
+  model; unconfigured model errors) + `embeddings()` core cases. *Still outstanding (web-facing half of
+  Phase 4):* SSE streaming of ranking progress for the web UI, and the `rank` param fused onto `search_jobs`
+  (a round-trip optimization).
+- **Phase 4b — embedding recall + distilled ranker (optional, `nalgebra`).** Richer than the shipped Rocchio
+  taste ranker: port `rank.py` (lexical-seed ridge ranker in embedding space) and `btrank --distill` (PCA +
+  logistic over embeddings → score the whole corpus with no LLM calls). *Tests:* recovers a planted signal;
+  parity with the Python oracle on the fixture (within tolerance). Build when wanted.
 - **Phase 5 — MCP App UI.** Declare `_meta.ui.resourceUri`; serve the React bundle as a `ui://` resource;
   the iframe calls tools via the App bridge. *Tests:* resource payload shape/mime; the React data-source
   adapter (bridge vs http); JSON in the tool result regardless.

@@ -3,6 +3,7 @@
 //! "one core, many faces" rule in `docs/DESIGN.md` §2.
 
 use joblode_core::{Criteria, Job};
+use joblode_rank::Ranked;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
@@ -117,6 +118,61 @@ pub struct SearchResults {
     pub total: usize,
     /// Compact rows, capped at `limit`. Call `get_job` for the full description.
     pub results: Vec<JobSummary>,
+}
+
+/// One prior user reaction to a recommended role — the feedback-loop signal.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct FeedbackItem {
+    /// Dataset id of the role reacted to.
+    pub id: String,
+    /// `liked`/`applied`/`saved` (positive) or `disliked`/`rejected`/`skipped`
+    /// (negative). Unrecognized labels are ignored.
+    pub label: String,
+}
+
+impl FeedbackItem {
+    /// `Some(true)` for a positive signal, `Some(false)` for negative, `None` if
+    /// the label isn't recognized.
+    #[must_use]
+    pub fn polarity(&self) -> Option<bool> {
+        match self.label.trim().to_ascii_lowercase().as_str() {
+            "liked" | "like" | "applied" | "saved" | "shortlisted" => Some(true),
+            "disliked" | "dislike" | "rejected" | "skipped" | "hidden" => Some(false),
+            _ => None,
+        }
+    }
+}
+
+/// `rank_jobs` input: a candidate source (hard filters or explicit `ids`), the
+/// resume + method for the optional model pass, and prior `feedback`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RankParams {
+    /// Hard filters used to draw candidates (ignored when `ids` is given).
+    #[serde(flatten)]
+    pub filter: SearchParams,
+    /// Explicit candidate ids to rank instead of running a filter search.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Resume text; required by the `match` and `pairwise` methods.
+    #[serde(default)]
+    pub resume: Option<String>,
+    /// Prior reactions, used to personalize the free taste ranking.
+    #[serde(default)]
+    pub feedback: Vec<FeedbackItem>,
+    /// `match` or `pairwise` (needs a configured model). Omit for the free,
+    /// keyless taste ranking.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Max ranked rows to return (default 10).
+    #[serde(default)]
+    pub top: Option<usize>,
+}
+
+/// `rank_jobs` result: a compact, ordered shortlist.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct RankResults {
+    /// Ranked rows, best first. Call `get_job` for a role's full description.
+    pub results: Vec<Ranked>,
 }
 
 #[cfg(test)]
