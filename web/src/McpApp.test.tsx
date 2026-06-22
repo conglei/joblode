@@ -4,11 +4,11 @@ import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { McpApp } from "./McpApp";
-import { rankJobs } from "./api";
+import { getJob, rankJobs } from "./api";
 import type { Seed } from "./lib";
-import type { JobSummary } from "./types";
+import type { Job, JobSummary } from "./types";
 
-// The drawer + re-rank go through the adapter; the card never searches.
+// The detail + re-rank go through the adapter; the card never searches.
 vi.mock("./api", () => ({ getJob: vi.fn(), rankJobs: vi.fn() }));
 
 function role(id: string, title: string): JobSummary {
@@ -47,6 +47,7 @@ function renderCard(props: {
 describe("McpApp", () => {
   beforeEach(() => {
     vi.mocked(rankJobs).mockReset();
+    vi.mocked(getJob).mockReset();
   });
 
   it("renders rows from the initial seed (the tool result that opened the app)", () => {
@@ -78,6 +79,44 @@ describe("McpApp", () => {
     await user.click(screen.getByRole("button", { name: "Like Backend Engineer" }));
 
     expect(onPreference).toHaveBeenLastCalledWith([{ id: "a", label: "liked" }]);
+  });
+
+  it("opens a role's detail inline (scrollable in flow) and returns to the list", async () => {
+    const full: Job = {
+      ...role("a", "Backend Engineer"),
+      sub_function: "Backend",
+      work_mode: "remote",
+      country_code: "US",
+      city: "San Francisco",
+      region: "CA",
+      jd_markdown: "You will build resilient services.",
+    };
+    vi.mocked(getJob).mockResolvedValue(full);
+    const user = userEvent.setup();
+    renderCard({ initial: seedOf(["a", "Backend Engineer"]) });
+
+    await user.click(screen.getByText("Backend Engineer"));
+    expect(
+      await screen.findByText("You will build resilient services."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Back to results/ }));
+    expect(screen.getByText("1 matches")).toBeInTheDocument();
+  });
+
+  it("caps the list to a batch and reveals the rest on request", async () => {
+    const many = Array.from(
+      { length: 14 },
+      (_, i) => [`id${i}`, `Role ${i}`] as [string, string],
+    );
+    const user = userEvent.setup();
+    renderCard({ initial: seedOf(...many) });
+
+    expect(screen.getByText("Role 0")).toBeInTheDocument();
+    expect(screen.queryByText("Role 12")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Show all 14/ }));
+    expect(screen.getByText("Role 12")).toBeInTheDocument();
   });
 
   it("re-ranks the card by the user's picks via the taste ranker", async () => {

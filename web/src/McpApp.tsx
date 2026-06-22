@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Button, Group, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Box, Button, Group, Text, Title } from "@mantine/core";
 
 import { rankJobs } from "./api";
-import { JobDrawer } from "./components/JobDrawer";
+import { JobDetail } from "./components/JobDetail";
 import { ResultsTable } from "./components/ResultsTable";
 import type { Seed } from "./lib";
 import type { FeedbackItem, FeedbackLabel, RankResults } from "./types";
+
+/** How many roles to show before a "show all" — small enough to triage at a glance. */
+const BATCH = 10;
 
 interface McpAppProps {
   /** Seed captured before mount (the tool result that opened the app), if any. */
@@ -28,12 +31,15 @@ export function McpApp({ initial, subscribe, onPreference }: McpAppProps) {
   const [ranked, setRanked] = useState<RankResults | null>(null);
   const [rankError, setRankError] = useState<string | null>(null);
   const [rankLoading, setRankLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   // A later search Claude runs replaces the set, so the old ranking is stale.
   useEffect(() => {
     subscribe((next) => {
       setSeed(next);
       setRanked(null);
+      setSelectedId(null);
+      setShowAll(false);
     });
   }, [subscribe]);
 
@@ -94,6 +100,27 @@ export function McpApp({ initial, subscribe, onPreference }: McpAppProps) {
     ? Object.fromEntries(ranked.results.map((entry) => [entry.id, entry]))
     : seed?.scores;
   const feedbackCount = Object.keys(feedback).length;
+  // Show a small batch by default so the user can triage at a glance.
+  const visible = showAll ? rows : rows.slice(0, BATCH);
+
+  // Detail view: rendered inline (not a fixed overlay) so it scrolls inside the
+  // host-controlled iframe; "Back" returns to the list.
+  if (selectedId !== null) {
+    return (
+      <Box p="sm">
+        <Anchor
+          component="button"
+          type="button"
+          size="sm"
+          mb="xs"
+          onClick={() => setSelectedId(null)}
+        >
+          ← Back to results
+        </Anchor>
+        <JobDetail jobId={selectedId} showTitle />
+      </Box>
+    );
+  }
 
   return (
     <Box p="sm">
@@ -115,7 +142,7 @@ export function McpApp({ initial, subscribe, onPreference }: McpAppProps) {
       {rows.length > 0 ? (
         <>
           <ResultsTable
-            rows={rows}
+            rows={visible}
             scores={scores}
             feedback={feedback}
             onFeedback={toggleFeedback}
@@ -135,6 +162,15 @@ export function McpApp({ initial, subscribe, onPreference }: McpAppProps) {
                 Clear ranking
               </Button>
             ) : null}
+            {!showAll && rows.length > BATCH ? (
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => setShowAll(true)}
+              >
+                Show all {rows.length}
+              </Button>
+            ) : null}
           </Group>
         </>
       ) : (
@@ -142,8 +178,6 @@ export function McpApp({ initial, subscribe, onPreference }: McpAppProps) {
           Run a search in the chat to see roles here.
         </Text>
       )}
-
-      <JobDrawer jobId={selectedId} onClose={() => setSelectedId(null)} />
     </Box>
   );
 }
