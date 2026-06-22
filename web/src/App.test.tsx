@@ -74,6 +74,20 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders seeded results on first paint without a search (MCP App)", () => {
+    // Inside an MCP App, main.tsx passes the host-pushed tool result as a seed;
+    // the table shows immediately and no search call is made.
+    render(
+      <MantineProvider>
+        <App initialResults={results} />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("Backend Engineer")).toBeInTheDocument();
+    expect(screen.getByText("1 matches")).toBeInTheDocument();
+    expect(searchJobs).not.toHaveBeenCalled();
+  });
+
   it("shows an empty state when nothing matches", async () => {
     vi.mocked(searchJobs).mockResolvedValue({ total: 0, results: [] });
     const user = userEvent.setup();

@@ -25,15 +25,26 @@ import type {
   SearchResults,
 } from "./types";
 
-/** The standalone web UI: one search (hard filters + optional semantic query), a
- *  results table, a detail drawer, and a feedback-driven ranking pass — all over
- *  the REST API. The same components serve the MCP App in Phase 5. */
-export function App() {
-  const [results, setResults] = useState<SearchResults | null>(null);
+interface AppProps {
+  /** Seed for the first render. Inside an MCP App, the host pushes the result of
+   *  the tool Claude called (`search_jobs`/`semantic_search`); standalone it's
+   *  omitted and the app starts empty. See `seedFromToolResult` + `main.tsx`. */
+  initialResults?: SearchResults;
+  initialScores?: Record<string, Ranked>;
+}
+
+/** The UI: one search (hard filters + optional semantic query), a results table, a
+ *  detail drawer, and a feedback-driven ranking pass. Standalone it talks to the
+ *  REST API; inside an MCP App the same components talk to Claude over the bridge
+ *  and seed from the host-pushed tool result (DESIGN §7). */
+export function App({ initialResults, initialScores }: AppProps = {}) {
+  const [results, setResults] = useState<SearchResults | null>(
+    initialResults ?? null,
+  );
   // Set when the last search carried a semantic query: similarity by id.
   const [searchScores, setSearchScores] = useState<
     Record<string, Ranked> | undefined
-  >(undefined);
+  >(initialScores);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
