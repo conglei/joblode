@@ -208,10 +208,11 @@ impl JobStore {
             [&path],
             |row| row.get(0),
         )?;
-        self.sidecar = Some(Sidecar {
-            path,
-            dim: usize::try_from(dim).unwrap_or(0),
-        });
+        // Reject a bogus dimension cleanly here rather than letting a `0`-d sidecar
+        // surface as a confusing failure on the first semantic query.
+        let dim =
+            usize::try_from(dim).map_err(|_| Error::IntegralValueOutOfRange(0, i128::from(dim)))?;
+        self.sidecar = Some(Sidecar { path, dim });
         Ok(())
     }
 

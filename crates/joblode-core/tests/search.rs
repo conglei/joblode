@@ -284,7 +284,16 @@ fn a_null_embedding_comes_back_empty_not_an_error() {
 /// so the sidecar path's results match the brute-force path exactly.
 fn store_with_sidecar(tag: &str) -> JobStore {
     let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
-    let out = std::env::temp_dir().join(format!("joblode_sidecar_{tag}.parquet"));
+    // Unique per process + nanos so parallel test runs never share a sidecar file.
+    let nonce = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos()
+    );
+    let out = std::env::temp_dir().join(format!("joblode_sidecar_{tag}_{nonce}.parquet"));
     let dim = store
         .build_embedding_sidecar(&out, 256)
         .expect("build sidecar");

@@ -17,3 +17,9 @@ coverage:
 comment:
   layout: "reach, diff, files"
   require_changes: true
+
+# The SearchAPI (Google Jobs) source is a complete port but not yet wired into
+# `search::run` (federation is punted — see DESIGN). It's `#![allow(dead_code)]`
+# and unexercised by design; ignore it until federation lands and tests cover it.
+ignore:
+  - "crates/joblode-server/src/searchapi.rs"

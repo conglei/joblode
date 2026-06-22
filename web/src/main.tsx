@@ -41,7 +41,22 @@ async function boot() {
         }
       };
 
-      await bridge.connect();
+      // Bound the handshake so a hung host can't block the first render forever;
+      // on timeout we fall through to the standalone HTTP app below.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          bridge.connect(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("MCP bridge connect timeout")),
+              5000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
       setActiveSource(createBridgeSource(bridge));
       renderRoot(
         <McpApp

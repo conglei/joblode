@@ -12,7 +12,7 @@ between "us" and "Claude," see [DESIGN.md](DESIGN.md) §1 and §13.
 
 ## The flow at a glance
 
-```
+```text
 1. Narrow      ── conversation ──────────────────────────────►  hard filters
 2. Search      ── search_jobs / semantic_search ─────────────►  candidate set (compact rows)
 3. Rank        ── rank_jobs (feedback + optional cheap model) ►  short, ordered shortlist

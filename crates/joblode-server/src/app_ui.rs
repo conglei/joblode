@@ -21,7 +21,10 @@ pub const APP_MIME: &str = "text/html;profile=mcp-app";
 /// Env var pointing at the built single-file App HTML; defaults to the
 /// `vite-plugin-singlefile` output (`pnpm --filter @joblode/web build` emits it).
 const APP_HTML_ENV: &str = "JOBLODE_APP_HTML";
-const DEFAULT_APP_HTML: &str = "web/dist-app/index.html";
+/// Resolved at compile time relative to this crate so the bundle is found
+/// regardless of the process CWD (a host may launch us from anywhere).
+const DEFAULT_APP_HTML: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/dist-app/index.html");
 
 /// Shown when the App bundle hasn't been built yet, so the server still serves a
 /// valid (if inert) resource instead of erroring. The real UI replaces this once
