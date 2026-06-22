@@ -15,6 +15,7 @@
 mod dto;
 mod http;
 mod mcp;
+mod ranking;
 
 use std::sync::{Arc, Mutex};
 
@@ -103,9 +104,10 @@ async fn serve_http(
     }
     let cancellation = tokio_util::sync::CancellationToken::new();
 
-    // The MCP service closure takes ownership of `store`; the REST router needs its
-    // own handle to the same shared store.
+    // The MCP service closure takes ownership of `store`/`model`; the REST router
+    // needs its own handles to the same shared store and model.
     let api_store = store.clone();
+    let api_model = model.clone();
     let service = StreamableHttpService::new(
         move || Ok(JobServer::new(store.clone(), model.clone())),
         LocalSessionManager::default().into(),
@@ -122,7 +124,7 @@ async fn serve_http(
 
     let router = axum::Router::new()
         .nest_service("/mcp", service)
-        .merge(http::router(api_store))
+        .merge(http::router(api_store, api_model))
         .fallback_service(serve_web);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

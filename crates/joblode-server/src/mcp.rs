@@ -5,8 +5,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use joblode_core::{Criteria, Job, JobStore};
-use joblode_rank::{Candidate, Method, ModelClient, RankRequest};
+use joblode_core::{Job, JobStore};
+use joblode_rank::ModelClient;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{Implementation, ServerCapabilities, ServerInfo},
@@ -15,32 +15,13 @@ use rmcp::{
 use serde::Deserialize;
 
 use crate::dto::{JobSummary, RankParams, RankResults, SearchParams, SearchResults};
-
-/// Default ranked-shortlist size returned by `rank_jobs`.
-const RANK_TOP: usize = 10;
-
-/// How many candidates to draw (by hard filter) before ranking, when ranking
-/// from criteria rather than explicit ids.
-const RANK_CANDIDATE_LIMIT: usize = 200;
-
-/// How many taste-ordered candidates the `match` pass scores (one model call each).
-const REFINE_MATCH: usize = 20;
-
-/// How many the `pairwise` pass compares — smaller, since it is O(n²) calls.
-const REFINE_PAIRWISE: usize = 8;
+use crate::ranking::{self, RankError};
 
 /// Identifies one role for [`JobServer::get_job`].
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetJobParams {
     /// Dataset identifier of the role to fetch.
     pub id: String,
-}
-
-/// Candidates plus the feedback embeddings, gathered in one blocking DB pass.
-struct Prepared {
-    candidates: Vec<Candidate>,
-    positives: Vec<Vec<f32>>,
-    negatives: Vec<Vec<f32>>,
 }
 
 /// MCP server over one shared, read-only [`JobStore`], with an optional
@@ -131,126 +112,14 @@ impl JobServer {
         &self,
         Parameters(params): Parameters<RankParams>,
     ) -> Result<Json<RankResults>, ErrorData> {
-        let method = parse_method(params.method.as_deref())?;
-        let top = params.top.unwrap_or(RANK_TOP);
-        let refine_k = match method {
-            Method::Pairwise => REFINE_PAIRWISE,
-            _ => REFINE_MATCH,
-        };
-
-        let store = self.store.clone();
-        let criteria = params.filter.criteria();
-        let candidate_limit = params.filter.limit.unwrap_or(RANK_CANDIDATE_LIMIT);
-        let ids = params.ids;
-        let feedback = params.feedback;
-
-        // One blocking DB pass: draw candidates and the feedback embeddings.
-        let prepared = tokio::task::spawn_blocking(move || {
-            let store = store.lock().expect("store mutex poisoned");
-            prepare_candidates(&store, &criteria, candidate_limit, &ids, &feedback)
-        })
-        .await
-        .map_err(|error| ErrorData::internal_error(format!("rank task failed: {error}"), None))?
-        .map_err(|error| ErrorData::internal_error(format!("rank prep failed: {error}"), None))?;
-
-        let request = RankRequest {
-            resume: params.resume.as_deref(),
-            candidates: prepared.candidates,
-            positives: prepared.positives,
-            negatives: prepared.negatives,
-            method,
-            top,
-            refine_k,
-        };
-
-        let results = joblode_rank::rank(self.model.as_deref(), request)
+        ranking::run(self.store.clone(), self.model.clone(), params)
             .await
-            .map_err(|error| {
-                let message = error.to_string();
-                // "requires …" = a config/caller problem; anything else is internal.
-                if message.contains("requires") {
-                    ErrorData::invalid_params(message, None)
-                } else {
-                    ErrorData::internal_error(message, None)
-                }
-            })?;
-
-        Ok(Json(RankResults { results }))
+            .map(Json)
+            .map_err(|error| match error {
+                RankError::BadRequest(message) => ErrorData::invalid_params(message, None),
+                RankError::Internal(message) => ErrorData::internal_error(message, None),
+            })
     }
-}
-
-/// Parses the `method` string into a [`Method`], defaulting to free taste ranking.
-fn parse_method(method: Option<&str>) -> Result<Method, ErrorData> {
-    match method.map(|m| m.trim().to_ascii_lowercase()).as_deref() {
-        None | Some("") | Some("free") => Ok(Method::Free),
-        Some("match") => Ok(Method::Match),
-        Some("pairwise") => Ok(Method::Pairwise),
-        Some(other) => Err(ErrorData::invalid_params(
-            format!("unknown rank method '{other}' (use 'match', 'pairwise', or omit)"),
-            None,
-        )),
-    }
-}
-
-/// Draws the candidate set and resolves feedback ids to embeddings, all under one
-/// held store lock. Candidates missing an embedding still rank (taste score 0).
-fn prepare_candidates(
-    store: &JobStore,
-    criteria: &Criteria,
-    candidate_limit: usize,
-    ids: &[String],
-    feedback: &[crate::dto::FeedbackItem],
-) -> anyhow::Result<Prepared> {
-    let jobs: Vec<Job> = if ids.is_empty() {
-        store.search(criteria, candidate_limit)?.0
-    } else {
-        let mut found = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(job) = store.get_job(id)? {
-                found.push(job);
-            }
-        }
-        found
-    };
-
-    // Fetch embeddings for candidates and feedback ids together (deduplicated).
-    let mut wanted: Vec<String> = jobs.iter().map(|job| job.id.clone()).collect();
-    wanted.extend(feedback.iter().map(|item| item.id.clone()));
-    wanted.sort();
-    wanted.dedup();
-    let wanted_refs: Vec<&str> = wanted.iter().map(String::as_str).collect();
-    let embeddings = store.embeddings(&wanted_refs)?;
-
-    let candidates = jobs
-        .into_iter()
-        .map(|job| {
-            let embedding = embeddings.get(job.id.as_str()).cloned().unwrap_or_default();
-            Candidate {
-                id: job.id,
-                title: job.title,
-                summary: job.role_summary,
-                embedding,
-            }
-        })
-        .collect();
-
-    let mut positives = Vec::new();
-    let mut negatives = Vec::new();
-    for item in feedback {
-        if let Some(embedding) = embeddings.get(item.id.as_str()) {
-            match item.polarity() {
-                Some(true) => positives.push(embedding.clone()),
-                Some(false) => negatives.push(embedding.clone()),
-                None => {}
-            }
-        }
-    }
-
-    Ok(Prepared {
-        candidates,
-        positives,
-        negatives,
-    })
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -288,33 +157,7 @@ mod tests {
 
     impl ClientHandler for TestClient {}
 
-    /// Deterministic model for the ranking tests: `match` favors `city-direct`,
-    /// `compare` orders by id. No network.
-    struct FakeModel;
-
-    #[async_trait::async_trait]
-    impl ModelClient for FakeModel {
-        async fn match_score(
-            &self,
-            _resume: &str,
-            job: &joblode_rank::JobText,
-        ) -> anyhow::Result<joblode_rank::MatchScore> {
-            let score = if job.id == "city-direct" { 90.0 } else { 10.0 };
-            Ok(joblode_rank::MatchScore {
-                score,
-                why: format!("planted fit for {}", job.id),
-            })
-        }
-
-        async fn compare(
-            &self,
-            _resume: &str,
-            a: &joblode_rank::JobText,
-            b: &joblode_rank::JobText,
-        ) -> anyhow::Result<std::cmp::Ordering> {
-            Ok(a.id.cmp(&b.id))
-        }
-    }
+    use crate::ranking::testing::FavorId;
 
     fn store_at(file: &str) -> Arc<Mutex<JobStore>> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -491,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn rank_jobs_match_method_uses_the_configured_model() {
         // With a model, the match pass reorders by its scores (planted: city-direct=90).
-        let server = JobServer::new(rank_store(), Some(Arc::new(FakeModel)));
+        let server = JobServer::new(rank_store(), Some(Arc::new(FavorId("city-direct"))));
         let client = connect_with(server).await;
 
         let result = client

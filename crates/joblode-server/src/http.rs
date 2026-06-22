@@ -1,6 +1,7 @@
-//! The REST face of joblode: `POST /api/search` and `GET /api/job/{id}` over a
-//! shared [`JobStore`]. Same wire shapes as the MCP tools (see `dto`); this is the
-//! adapter the standalone web UI talks to. See `docs/DESIGN.md` §7.
+//! The REST face of joblode: `POST /api/search`, `GET /api/job/{id}`, and
+//! `POST /api/rank` over a shared [`JobStore`] (+ optional ranking model). Same
+//! wire shapes as the MCP tools (see `dto`); this is the adapter the standalone
+//! web UI talks to. See `docs/DESIGN.md` §7.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,21 +12,25 @@ use axum::{
     Json, Router,
 };
 use joblode_core::{Job, JobStore};
+use joblode_rank::ModelClient;
 
-use crate::dto::{JobSummary, SearchParams, SearchResults};
+use crate::dto::{JobSummary, RankParams, RankResults, SearchParams, SearchResults};
+use crate::ranking::{self, RankError};
 
 /// Shared, read-only state for the API handlers.
 #[derive(Clone)]
 struct ApiState {
     store: Arc<Mutex<JobStore>>,
+    model: Option<Arc<dyn ModelClient>>,
 }
 
-/// Builds the `/api/*` router backed by `store`.
-pub fn router(store: Arc<Mutex<JobStore>>) -> Router {
+/// Builds the `/api/*` router backed by `store` and the optional ranking `model`.
+pub fn router(store: Arc<Mutex<JobStore>>, model: Option<Arc<dyn ModelClient>>) -> Router {
     Router::new()
         .route("/api/search", post(search))
         .route("/api/job/{id}", get(job))
-        .with_state(ApiState { store })
+        .route("/api/rank", post(rank))
+        .with_state(ApiState { store, model })
 }
 
 /// `POST /api/search` — hard-filter the corpus, returning the full match count
@@ -70,6 +75,22 @@ async fn job(
     Ok(Json(job))
 }
 
+/// `POST /api/rank` — reduce a candidate set to a compact, ordered shortlist. The
+/// free taste ranking needs no key; `method` "match"/"pairwise" require a
+/// configured model and a resume (400 otherwise).
+async fn rank(
+    State(state): State<ApiState>,
+    Json(params): Json<RankParams>,
+) -> Result<Json<RankResults>, (StatusCode, String)> {
+    ranking::run(state.store.clone(), state.model.clone(), params)
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            RankError::Internal(detail) => internal("rank", detail),
+        })
+}
+
 /// Logs the real failure server-side and returns an opaque 500, so DuckDB/query
 /// internals never travel over the API surface.
 fn internal(context: &str, detail: impl std::fmt::Display) -> (StatusCode, String) {
@@ -92,12 +113,31 @@ mod tests {
 
     use super::*;
 
-    fn app() -> Router {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/fixture.parquet");
-        let store = Arc::new(Mutex::new(
+    fn store_at(file: &str) -> Arc<Mutex<JobStore>> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata")
+            .join(file);
+        Arc::new(Mutex::new(
             JobStore::open(path).expect("fixture should open"),
-        ));
-        router(store)
+        ))
+    }
+
+    fn app() -> Router {
+        router(store_at("fixture.parquet"), None)
+    }
+
+    /// Router over the embedding fixture, with an optional ranking model.
+    fn rank_app(model: Option<Arc<dyn ModelClient>>) -> Router {
+        router(store_at("rank_fixture.parquet"), model)
+    }
+
+    fn post_json(uri: &str, payload: serde_json::Value) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .expect("build request")
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -189,5 +229,52 @@ mod tests {
             .await
             .expect("request");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn rank_free_method_floats_liked_role_to_the_top() {
+        // No model needed: liking "city-direct" pulls it to the top for free.
+        let response = rank_app(None)
+            .oneshot(post_json(
+                "/api/rank",
+                serde_json::json!({ "feedback": [{ "id": "city-direct", "label": "liked" }] }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert_eq!(rows[0]["id"], "city-direct");
+    }
+
+    #[tokio::test]
+    async fn rank_model_method_400s_without_a_configured_model() {
+        let response = rank_app(None)
+            .oneshot(post_json(
+                "/api/rank",
+                serde_json::json!({ "resume": "engineer", "method": "match" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rank_match_method_uses_the_configured_model() {
+        let model = Arc::new(crate::ranking::testing::FavorId("city-direct"));
+        let response = rank_app(Some(model))
+            .oneshot(post_json(
+                "/api/rank",
+                serde_json::json!({ "resume": "engineer", "method": "match", "top": 3 }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert_eq!(rows[0]["id"], "city-direct");
+        assert_eq!(rows[0]["score"], 90.0);
     }
 }
