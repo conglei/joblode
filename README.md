@@ -12,8 +12,9 @@ as a standalone web app and as an **MCP App** inside Claude. The intended flow: 
 criteria, searches, ranks against your resume with a cheap model (saving cloud tokens), and hands you a
 shortlist — while you keep your own tracking spreadsheet.
 
-> **Status: early.** This is the Phase 0 skeleton. The architecture and roadmap live in
-> [`docs/DESIGN.md`](docs/DESIGN.md). The query/rank engine (DuckDB + Gemini) lands in the next phases.
+> **Status: early.** The DuckDB-backed search engine and the MCP server (`search_jobs` + `get_job`, over
+> stdio and HTTP) are working — see **[docs/MCP.md](docs/MCP.md)** to run it and connect Claude. Resume-aware
+> ranking and the in-conversation React UI come next. Architecture and roadmap: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Layout
 
@@ -43,6 +44,18 @@ pnpm turbo run lint typecheck test build
 ```
 
 CI runs all of the above on every push and pull request.
+
+## Use it
+
+Place the open-jobs dataset at the repo root as `open-jobs.parquet` (the default), build, and run:
+
+```bash
+cargo build -p joblode-server --release
+./target/release/joblode-server stdio   # for Claude; or `http` for an HTTP MCP client
+```
+
+Full instructions — getting the data, the transports, and wiring it into Claude Code / Claude Desktop —
+are in **[docs/MCP.md](docs/MCP.md)**.
 
 ## License
 

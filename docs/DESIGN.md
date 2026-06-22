@@ -1,6 +1,6 @@
 # Design: open-jobs as an MCP-native, agent-orchestrated job search
 
-Status: **implementation in progress — Phases 0–1 complete** · Owner: Conglei · Last updated: 2026-06-22
+Status: **implementation in progress — Phases 0–2 complete** · Owner: Conglei · Last updated: 2026-06-21
 
 This document is the architecture and phased implementation plan. Resolved decisions are recorded in
 §11; completed phases are marked in §8.
@@ -247,8 +247,13 @@ reaches parity.
   filters, multi-value criteria, title+company composition, US-remote-scope matching, comp-floor
   sentinel handling, case-insensitive `(company,title)` dedup, empty results, missing IDs, and full-JD
   retrieval.
-- **Phase 2 — MCP server (`rmcp`).** `search_jobs` + `get_job` tools (JSON only), stdio + HTTP. *Tests:*
-  invoke tools through an in-process transport; assert result schema and that `get_job` returns the JD.
+- **Phase 2 — MCP server (`rmcp`) — complete.** `JobServer` exposes `search_jobs` (token-shaped
+  `{total, results[]}` compact rows, `limit`-capped) and `get_job` (full record incl. `jd_markdown`) as
+  structured-JSON MCP tools over both stdio and streamable HTTP (`/mcp`), backed by a shared `JobStore`
+  (`Arc<Mutex<…>>`, queries off-loaded via `spawn_blocking`). `joblode-server [stdio|http]` selects the
+  transport; `JOBLODE_PARQUET` / `JOBLODE_HTTP_ADDR` configure it. *Tests:* 5 in-process cases over a
+  `tokio::io::duplex` client assert tool discovery, the search total/row-cap and compact shape, that
+  `get_job` returns the JD, and that a missing id errors.
 - **Phase 3 — REST + SSE + React.** axum `/api/search`, `/api/job/:id`, serves the React build. *Tests:*
   axum handler tests (`tower::ServiceExt::oneshot`); one Playwright smoke (search → rows → open drawer).
 - **Phase 4 — ranking (config-gated).** `joblode-rank` match + pairwise; `rank_jobs` tool; `rank` param on

@@ -30,7 +30,7 @@ pub struct Criteria {
 }
 
 /// A job record returned by search or retrieval.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct Job {
     /// Dataset identifier.
     pub id: String,
@@ -74,8 +74,22 @@ pub struct JobStore {
     parquet: String,
 }
 
+impl std::fmt::Debug for JobStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The DuckDB connection is not `Debug`; expose only the dataset path.
+        f.debug_struct("JobStore")
+            .field("parquet", &self.parquet)
+            .finish_non_exhaustive()
+    }
+}
+
 impl JobStore {
     /// Opens and validates a local parquet dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is not valid UTF-8, or if the parquet cannot
+    /// be opened and read (missing file, unreadable, or not a parquet).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let parquet = path
@@ -94,6 +108,11 @@ impl JobStore {
     }
 
     /// Searches jobs and returns deduplicated results plus the total count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying SQL query fails (e.g. the dataset
+    /// schema is missing an expected column).
     pub fn search(&self, criteria: &Criteria) -> Result<(Vec<Job>, usize)> {
         let mut filters = Vec::new();
         let mut parameters = vec![Value::Text(self.parquet.clone())];
@@ -215,6 +234,10 @@ impl JobStore {
     }
 
     /// Retrieves one full job by dataset identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no job has the given `id`, or if the query fails.
     pub fn get_job(&self, id: &str) -> Result<Job> {
         self.connection.query_row(
             r#"
