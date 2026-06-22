@@ -175,6 +175,31 @@ pub struct RankResults {
     pub results: Vec<Ranked>,
 }
 
+/// `semantic_search` input: a free-text query plus the same hard filters.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SemanticParams {
+    /// Free-text description of the roles/responsibilities to match.
+    pub query: String,
+    /// Hard filters applied before the similarity ranking.
+    #[serde(flatten)]
+    pub filter: SearchParams,
+}
+
+/// One semantic hit: a compact row plus its 0–1 cosine similarity.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SemanticHit {
+    #[serde(flatten)]
+    pub summary: JobSummary,
+    /// Best-variant cosine similarity to the query, in `[-1, 1]`.
+    pub score: f32,
+}
+
+/// `semantic_search` result: rows ordered by similarity, best first.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SemanticResults {
+    pub results: Vec<SemanticHit>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

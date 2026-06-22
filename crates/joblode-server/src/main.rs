@@ -16,12 +16,13 @@ mod dto;
 mod http;
 mod mcp;
 mod ranking;
+mod semantic;
 
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use joblode_core::JobStore;
-use joblode_rank::{GeminiClient, ModelClient};
+use joblode_rank::{EmbedClient, GeminiClient, ModelClient, OpenAiEmbedder};
 use rmcp::transport::{
     stdio,
     streamable_http_server::{
@@ -46,12 +47,31 @@ async fn main() -> Result<()> {
         JobStore::open(&parquet).with_context(|| format!("failed to open {parquet}"))?,
     ));
     let model = build_model_client();
+    let embed = build_embed_client();
 
     if mode == "stdio" {
-        serve_stdio(store, model).await
+        serve_stdio(store, model, embed).await
     } else {
-        serve_http(store, model).await
+        serve_http(store, model, embed).await
     }
+}
+
+/// Builds the query-embedding client for semantic search from env, or `None` when
+/// it's unconfigured. Enabled when `JOBLODE_EMBED_PROVIDER=openai` and the key env
+/// var (default `OPENAI_API_KEY`) is set; model/base URL fall back to defaults
+/// (`text-embedding-3-small`, matching the dataset's vectors).
+fn build_embed_client() -> Option<Arc<dyn EmbedClient>> {
+    let provider = std::env::var("JOBLODE_EMBED_PROVIDER").unwrap_or_default();
+    if !provider.eq_ignore_ascii_case("openai") {
+        return None;
+    }
+    let key_var =
+        std::env::var("JOBLODE_EMBED_API_KEY_ENV").unwrap_or_else(|_| "OPENAI_API_KEY".into());
+    let api_key = std::env::var(&key_var).ok().filter(|key| !key.is_empty())?;
+    let base_url = std::env::var("JOBLODE_EMBED_BASE_URL").unwrap_or_default();
+    let model = std::env::var("JOBLODE_EMBED_MODEL").unwrap_or_default();
+
+    Some(Arc::new(OpenAiEmbedder::new(api_key, base_url, model)))
 }
 
 /// Builds the cheap-model ranking client from env, or `None` when ranking is
@@ -83,8 +103,9 @@ fn build_model_client() -> Option<Arc<dyn ModelClient>> {
 async fn serve_stdio(
     store: Arc<Mutex<JobStore>>,
     model: Option<Arc<dyn ModelClient>>,
+    embed: Option<Arc<dyn EmbedClient>>,
 ) -> Result<()> {
-    let service = JobServer::new(store, model).serve(stdio()).await?;
+    let service = JobServer::new(store, model, embed).serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
 }
@@ -92,6 +113,7 @@ async fn serve_stdio(
 async fn serve_http(
     store: Arc<Mutex<JobStore>>,
     model: Option<Arc<dyn ModelClient>>,
+    embed: Option<Arc<dyn EmbedClient>>,
 ) -> Result<()> {
     let addr_str = std::env::var("JOBLODE_HTTP_ADDR").unwrap_or_else(|_| "127.0.0.1:8000".into());
     // The server is local-only by design (see DESIGN §13); refuse to bind a
@@ -108,8 +130,9 @@ async fn serve_http(
     // needs its own handles to the same shared store and model.
     let api_store = store.clone();
     let api_model = model.clone();
+    let api_embed = embed.clone();
     let service = StreamableHttpService::new(
-        move || Ok(JobServer::new(store.clone(), model.clone())),
+        move || Ok(JobServer::new(store.clone(), model.clone(), embed.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
     );
@@ -124,7 +147,7 @@ async fn serve_http(
 
     let router = axum::Router::new()
         .nest_service("/mcp", service)
-        .merge(http::router(api_store, api_model))
+        .merge(http::router(api_store, api_model, api_embed))
         .fallback_service(serve_web);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

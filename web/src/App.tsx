@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppShell,
+  Button,
   Center,
   Divider,
   Group,
@@ -10,7 +11,7 @@ import {
   Title,
 } from "@mantine/core";
 
-import { rankJobs, searchJobs } from "./api";
+import { rankJobs, searchJobs, semanticSearch } from "./api";
 import { FilterSidebar } from "./components/FilterSidebar";
 import { JobDrawer } from "./components/JobDrawer";
 import { RankPanel, type RankMethod } from "./components/RankPanel";
@@ -18,15 +19,17 @@ import { ResultsTable } from "./components/ResultsTable";
 import type {
   FeedbackItem,
   FeedbackLabel,
+  Ranked,
   RankParams,
   RankResults,
   SearchParams,
   SearchResults,
+  SemanticResults,
 } from "./types";
 
-/** The standalone web UI: filter sidebar, results table, a detail drawer, and a
- *  feedback-driven ranking pass — all over the REST API. The same components
- *  serve the MCP App in Phase 5. */
+/** The standalone web UI: filter sidebar, results table, a detail drawer, a
+ *  feedback-driven ranking pass, and free-text semantic search — all over the
+ *  REST API. The same components serve the MCP App in Phase 5. */
 export function App() {
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
@@ -39,9 +42,14 @@ export function App() {
   const [rankLoading, setRankLoading] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
 
+  const [semantic, setSemantic] = useState<SemanticResults | null>(null);
+  const [semanticLoading, setSemanticLoading] = useState(false);
+  const [semanticError, setSemanticError] = useState<string | null>(null);
+
   // Guards against out-of-order responses: only the most recent call applies.
   const latestSearchId = useRef(0);
   const latestRankId = useRef(0);
+  const latestSemanticId = useRef(0);
 
   async function runSearch(params: SearchParams) {
     const searchId = ++latestSearchId.current;
@@ -51,6 +59,8 @@ export function App() {
     setRanked(null); // a new candidate set invalidates the old ranking
     setRankLoading(false);
     setRankError(null);
+    setSemantic(null); // a hard-filter search replaces the semantic view
+    setSemanticError(null);
     try {
       const next = await searchJobs(params);
       if (searchId !== latestSearchId.current) return;
@@ -61,6 +71,23 @@ export function App() {
       setResults(null);
     } finally {
       if (searchId === latestSearchId.current) setLoading(false);
+    }
+  }
+
+  async function runSemantic(query: string, params: SearchParams) {
+    const semanticId = ++latestSemanticId.current;
+    setSemanticLoading(true);
+    setSemanticError(null);
+    try {
+      const next = await semanticSearch({ ...params, query });
+      if (semanticId !== latestSemanticId.current) return;
+      setSemantic(next);
+    } catch (cause: unknown) {
+      if (semanticId !== latestSemanticId.current) return;
+      setSemanticError(cause instanceof Error ? cause.message : String(cause));
+      setSemantic(null);
+    } finally {
+      if (semanticId === latestSemanticId.current) setSemanticLoading(false);
     }
   }
 
@@ -122,11 +149,32 @@ export function App() {
         .map((entry) => byId.get(entry.id))
         .filter((row): row is NonNullable<typeof row> => row !== undefined)
     : null;
-  const scores = ranked
+  const rankScores = ranked
     ? Object.fromEntries(ranked.results.map((entry) => [entry.id, entry]))
     : undefined;
 
+  // The semantic view shows its own hits with cosine similarity scaled to 0–100.
+  const semanticScores: Record<string, Ranked> | undefined = semantic
+    ? Object.fromEntries(
+        semantic.results.map((hit) => [
+          hit.id,
+          { id: hit.id, score: Math.round(hit.score * 100), why: "" },
+        ]),
+      )
+    : undefined;
+
   const feedbackCount = Object.keys(feedback).length;
+
+  // Display priority: semantic view, else ranked reorder, else search results.
+  const tableRows = semantic
+    ? semantic.results
+    : (rankedRows ?? results?.results ?? null);
+  const tableScores = semantic ? semanticScores : rankScores;
+  const headerCount = semantic
+    ? `${semantic.results.length} semantic matches`
+    : results
+      ? `${results.total.toLocaleString()} matches`
+      : null;
 
   return (
     <AppShell
@@ -137,19 +185,22 @@ export function App() {
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between">
           <Title order={3}>joblode</Title>
-          {results ? (
-            <Text c="dimmed">{results.total.toLocaleString()} matches</Text>
-          ) : null}
+          {headerCount ? <Text c="dimmed">{headerCount}</Text> : null}
         </Group>
       </AppShell.Header>
 
       <AppShell.Navbar p="md">
-        <FilterSidebar onSearch={runSearch} loading={loading} />
+        <FilterSidebar
+          onSearch={runSearch}
+          loading={loading}
+          onSemantic={runSemantic}
+          semanticLoading={semanticLoading}
+        />
         <Divider my="md" />
         <RankPanel
           feedbackCount={feedbackCount}
           loading={rankLoading}
-          disabled={!results || results.results.length === 0}
+          disabled={!results || results.results.length === 0 || semantic !== null}
           ranked={ranked !== null}
           onRank={runRank}
           onClear={() => setRanked(null)}
@@ -167,31 +218,46 @@ export function App() {
             {rankError}
           </Alert>
         ) : null}
-        {ranked && rankedRows ? (
+        {semanticError ? (
+          <Alert color="red" title="Semantic search failed" mb="md">
+            {semanticError}
+          </Alert>
+        ) : null}
+
+        {semantic ? (
+          <Group justify="space-between" mb="xs">
+            <Text c="dimmed">Semantic matches, by similarity.</Text>
+            <Button variant="subtle" size="xs" onClick={() => setSemantic(null)}>
+              Back to results
+            </Button>
+          </Group>
+        ) : ranked && rankedRows ? (
           <Text c="dimmed" mb="xs">
             Ranked {rankedRows.length} of{" "}
             {results?.results.length.toLocaleString()} by your feedback.
           </Text>
         ) : null}
 
-        {loading && !results ? (
+        {(loading || semanticLoading) && !tableRows ? (
           <Center mih={240}>
             <Loader />
           </Center>
         ) : null}
-        {results && results.results.length > 0 ? (
+        {tableRows && tableRows.length > 0 ? (
           <ResultsTable
-            rows={rankedRows ?? results.results}
-            scores={scores}
+            rows={tableRows}
+            scores={tableScores}
             feedback={feedback}
             onFeedback={toggleFeedback}
             onSelect={setSelectedId}
           />
         ) : null}
-        {results && results.results.length === 0 ? (
-          <Text c="dimmed">No roles match these filters.</Text>
+        {tableRows && tableRows.length === 0 ? (
+          <Text c="dimmed">
+            {semantic ? "No semantic matches." : "No roles match these filters."}
+          </Text>
         ) : null}
-        {!results && !loading && !error ? (
+        {!tableRows && !loading && !semanticLoading && !error ? (
           <Text c="dimmed">Set filters and search to see roles.</Text>
         ) : null}
       </AppShell.Main>

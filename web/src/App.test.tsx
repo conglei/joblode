@@ -4,13 +4,14 @@ import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import { getJob, rankJobs, searchJobs } from "./api";
+import { getJob, rankJobs, searchJobs, semanticSearch } from "./api";
 import type { Job, RankResults, SearchResults } from "./types";
 
 vi.mock("./api", () => ({
   searchJobs: vi.fn(),
   getJob: vi.fn(),
   rankJobs: vi.fn(),
+  semanticSearch: vi.fn(),
 }));
 
 const summary = {
@@ -51,6 +52,7 @@ describe("App", () => {
     vi.mocked(searchJobs).mockReset().mockResolvedValue(results);
     vi.mocked(getJob).mockReset().mockResolvedValue(job);
     vi.mocked(rankJobs).mockReset();
+    vi.mocked(semanticSearch).mockReset();
   });
 
   it("searches, lists rows, and opens a role's detail drawer", async () => {
@@ -130,6 +132,30 @@ describe("App", () => {
     // The score badge renders in the ranked view.
     expect(await screen.findByText("88")).toBeInTheDocument();
     expect(screen.getByText(/Ranked 1 of 1/)).toBeInTheDocument();
+  });
+
+  it("runs a semantic search and shows scored hits", async () => {
+    vi.mocked(semanticSearch).mockResolvedValue({
+      results: [{ ...summary, score: 0.91 }],
+    });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.type(
+      screen.getByLabelText("Describe the role / responsibilities"),
+      "resilient backend services",
+    );
+    await user.click(screen.getByRole("button", { name: "Semantic search" }));
+
+    await waitFor(() => expect(semanticSearch).toHaveBeenCalledOnce());
+    expect(vi.mocked(semanticSearch).mock.calls[0][0]).toMatchObject({
+      query: "resilient backend services",
+    });
+
+    // The hit renders with its similarity scaled to 0–100.
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+    expect(screen.getByText("91")).toBeInTheDocument();
+    expect(screen.getByText("1 semantic matches")).toBeInTheDocument();
   });
 
   it("surfaces a ranking failure (e.g. unconfigured model)", async () => {

@@ -12,25 +12,40 @@ use axum::{
     Json, Router,
 };
 use joblode_core::{Job, JobStore};
-use joblode_rank::ModelClient;
+use joblode_rank::{EmbedClient, ModelClient};
 
-use crate::dto::{JobSummary, RankParams, RankResults, SearchParams, SearchResults};
+use crate::dto::{
+    JobSummary, RankParams, RankResults, SearchParams, SearchResults, SemanticParams,
+    SemanticResults,
+};
 use crate::ranking::{self, RankError};
+use crate::semantic;
 
 /// Shared, read-only state for the API handlers.
 #[derive(Clone)]
 struct ApiState {
     store: Arc<Mutex<JobStore>>,
     model: Option<Arc<dyn ModelClient>>,
+    embed: Option<Arc<dyn EmbedClient>>,
 }
 
-/// Builds the `/api/*` router backed by `store` and the optional ranking `model`.
-pub fn router(store: Arc<Mutex<JobStore>>, model: Option<Arc<dyn ModelClient>>) -> Router {
+/// Builds the `/api/*` router backed by `store`, the optional ranking `model`,
+/// and the optional `embed` client for semantic search.
+pub fn router(
+    store: Arc<Mutex<JobStore>>,
+    model: Option<Arc<dyn ModelClient>>,
+    embed: Option<Arc<dyn EmbedClient>>,
+) -> Router {
     Router::new()
         .route("/api/search", post(search))
         .route("/api/job/{id}", get(job))
         .route("/api/rank", post(rank))
-        .with_state(ApiState { store, model })
+        .route("/api/semantic", post(semantic_search))
+        .with_state(ApiState {
+            store,
+            model,
+            embed,
+        })
 }
 
 /// `POST /api/search` — hard-filter the corpus, returning the full match count
@@ -91,6 +106,21 @@ async fn rank(
         })
 }
 
+/// `POST /api/semantic` — free-text semantic search over role embeddings. 400 if
+/// the query is empty or no embeddings model is configured.
+async fn semantic_search(
+    State(state): State<ApiState>,
+    Json(params): Json<SemanticParams>,
+) -> Result<Json<SemanticResults>, (StatusCode, String)> {
+    semantic::run(state.store.clone(), state.embed.clone(), params)
+        .await
+        .map(Json)
+        .map_err(|error| match error {
+            RankError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            RankError::Internal(detail) => internal("semantic", detail),
+        })
+}
+
 /// Logs the real failure server-side and returns an opaque 500, so DuckDB/query
 /// internals never travel over the API surface.
 fn internal(context: &str, detail: impl std::fmt::Display) -> (StatusCode, String) {
@@ -123,12 +153,17 @@ mod tests {
     }
 
     fn app() -> Router {
-        router(store_at("fixture.parquet"), None)
+        router(store_at("fixture.parquet"), None, None)
     }
 
     /// Router over the embedding fixture, with an optional ranking model.
     fn rank_app(model: Option<Arc<dyn ModelClient>>) -> Router {
-        router(store_at("rank_fixture.parquet"), model)
+        router(store_at("rank_fixture.parquet"), model, None)
+    }
+
+    /// Router over the embedding fixture, with an optional embeddings client.
+    fn semantic_app(embed: Option<Arc<dyn EmbedClient>>) -> Router {
+        router(store_at("rank_fixture.parquet"), None, embed)
     }
 
     fn post_json(uri: &str, payload: serde_json::Value) -> Request<Body> {
@@ -254,6 +289,37 @@ mod tests {
             .oneshot(post_json(
                 "/api/rank",
                 serde_json::json!({ "resume": "engineer", "method": "match" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn semantic_search_orders_by_similarity() {
+        let embed = Arc::new(crate::ranking::testing::FixedEmbed(vec![
+            1.0, 0.0, 0.0, 0.0,
+        ]));
+        let response = semantic_app(Some(embed))
+            .oneshot(post_json(
+                "/api/semantic",
+                serde_json::json!({ "query": "backend engineering" }),
+            ))
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let data = body_json(response).await;
+        let rows = data["results"].as_array().expect("results array");
+        assert_eq!(rows[0]["id"], "city-direct");
+    }
+
+    #[tokio::test]
+    async fn semantic_search_400s_without_an_embedder() {
+        let response = semantic_app(None)
+            .oneshot(post_json(
+                "/api/semantic",
+                serde_json::json!({ "query": "backend engineering" }),
             ))
             .await
             .expect("request");

@@ -118,61 +118,8 @@ impl JobStore {
     /// Returns an error if the underlying SQL query fails (e.g. the dataset
     /// schema is missing an expected column).
     pub fn search(&self, criteria: &Criteria, limit: usize) -> Result<(Vec<Job>, usize)> {
-        let mut filters = Vec::new();
         let mut parameters = vec![Value::Text(self.parquet.clone())];
-
-        add_exact_filter(
-            &mut filters,
-            &mut parameters,
-            r#"coalesce("function", '')"#,
-            &criteria.functions,
-        );
-        add_exact_filter(
-            &mut filters,
-            &mut parameters,
-            "coalesce(level, '')",
-            &criteria.levels,
-        );
-        add_substring_filter(
-            &mut filters,
-            &mut parameters,
-            "coalesce(title, '')",
-            &criteria.titles,
-        );
-        add_substring_filter(
-            &mut filters,
-            &mut parameters,
-            "concat_ws(' ', company_name, company)",
-            &criteria.companies,
-        );
-
-        if let Some(country) = criteria.country.as_deref() {
-            filters.push(
-                "(upper(coalesce(country_code, '')) = upper(?) \
-                 OR (upper(?) = 'US' \
-                     AND lower(coalesce(remote_scope, '')) IN ('us-only', 'us-canada')))"
-                    .to_owned(),
-            );
-            parameters.push(Value::Text(country.to_owned()));
-            parameters.push(Value::Text(country.to_owned()));
-        }
-
-        if !criteria.cities.is_empty() {
-            let city_filters = criteria
-                .cities
-                .iter()
-                .map(|city| {
-                    parameters.push(Value::Text(city.to_lowercase()));
-                    "contains(lower(concat_ws(' ', city, region, location)), ?)".to_owned()
-                })
-                .collect::<Vec<_>>();
-            filters.push(format!("({})", city_filters.join(" OR ")));
-        }
-
-        if let Some(min_comp) = criteria.min_comp {
-            filters.push("(coalesce(salary_max_k, -1) = -1 OR salary_max_k >= ?)".to_owned());
-            parameters.push(Value::Double(min_comp));
-        }
+        let filters = collect_filters(criteria, &mut parameters);
 
         let where_clause = if filters.is_empty() {
             String::new()
@@ -322,6 +269,157 @@ impl JobStore {
         }
         Ok(out)
     }
+
+    /// Semantic search: orders roles by cosine similarity of `query` to their
+    /// embeddings, applying the same hard `criteria` filters as [`search`].
+    ///
+    /// Each role scores as the **best-matching variant** — the max cosine over
+    /// its title, JD, and each alternate-title embedding — so a query matches the
+    /// closest facet rather than a blurred average. Returns up to `limit` rows as
+    /// `(job, similarity)`, best first. `query` must match the dataset's embedding
+    /// dimension (1536 for text-embedding-3-small).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails (e.g. a dimension mismatch against the
+    /// stored vectors).
+    pub fn semantic_search(
+        &self,
+        query: &[f32],
+        criteria: &Criteria,
+        limit: usize,
+    ) -> Result<Vec<(Job, f32)>> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dim = query.len();
+        // The query vector is our own computed data (no injection); inline it once
+        // as a typed literal via a CTE so the cast/compare reuse it.
+        let literal = query
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut parameters = vec![Value::Text(self.parquet.clone())];
+        let mut filters = collect_filters(criteria, &mut parameters);
+        // A role needs at least one embedding to be matchable.
+        filters.push(
+            "(title_embedding IS NOT NULL OR jd_embedding IS NOT NULL \
+             OR alt_titles_embedding IS NOT NULL)"
+                .to_owned(),
+        );
+        let where_clause = format!("WHERE {}", filters.join(" AND "));
+
+        let sql = format!(
+            r#"
+            WITH q AS (SELECT [{literal}]::FLOAT[{dim}] AS qv)
+            SELECT
+                cast(id AS VARCHAR),
+                coalesce(nullif(company_name, ''), company, ''),
+                coalesce(title, ''),
+                coalesce(url, ''),
+                coalesce("function", ''),
+                coalesce(sub_function, ''),
+                coalesce(level, ''),
+                coalesce(work_mode, ''),
+                coalesce(remote_scope, ''),
+                coalesce(country_code, ''),
+                coalesce(salary_min_k, -1),
+                coalesce(salary_max_k, -1),
+                coalesce(location, ''),
+                coalesce(city, ''),
+                coalesce(region, ''),
+                coalesce(role_summary, ''),
+                coalesce(jd_markdown, ''),
+                greatest(
+                    coalesce(array_cosine_similarity(title_embedding::FLOAT[{dim}], q.qv), -1),
+                    coalesce(array_cosine_similarity(jd_embedding::FLOAT[{dim}], q.qv), -1),
+                    coalesce(list_aggregate(list_transform(
+                        alt_titles_embedding,
+                        x -> array_cosine_similarity(x::FLOAT[{dim}], q.qv)
+                    ), 'max'), -1)
+                ) AS similarity
+            FROM read_parquet(?), q
+            {where_clause}
+            ORDER BY similarity DESC
+            LIMIT {limit}
+            "#
+        );
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(parameters), |row| {
+            Ok((job_from_row(row)?, row.get::<_, f32>(17)?))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+}
+
+/// Builds the shared hard-filter `WHERE` fragments for `criteria`, pushing their
+/// bind parameters onto `parameters` (which must already hold the parquet path).
+/// Reused by [`JobStore::search`] and [`JobStore::semantic_search`].
+fn collect_filters(criteria: &Criteria, parameters: &mut Vec<Value>) -> Vec<String> {
+    let mut filters = Vec::new();
+
+    add_exact_filter(
+        &mut filters,
+        parameters,
+        r#"coalesce("function", '')"#,
+        &criteria.functions,
+    );
+    add_exact_filter(
+        &mut filters,
+        parameters,
+        "coalesce(level, '')",
+        &criteria.levels,
+    );
+    add_substring_filter(
+        &mut filters,
+        parameters,
+        "coalesce(title, '')",
+        &criteria.titles,
+    );
+    add_substring_filter(
+        &mut filters,
+        parameters,
+        "concat_ws(' ', company_name, company)",
+        &criteria.companies,
+    );
+
+    if let Some(country) = criteria.country.as_deref() {
+        filters.push(
+            "(upper(coalesce(country_code, '')) = upper(?) \
+             OR (upper(?) = 'US' \
+                 AND lower(coalesce(remote_scope, '')) IN ('us-only', 'us-canada')))"
+                .to_owned(),
+        );
+        parameters.push(Value::Text(country.to_owned()));
+        parameters.push(Value::Text(country.to_owned()));
+    }
+
+    if !criteria.cities.is_empty() {
+        let city_filters = criteria
+            .cities
+            .iter()
+            .map(|city| {
+                parameters.push(Value::Text(city.to_lowercase()));
+                "contains(lower(concat_ws(' ', city, region, location)), ?)".to_owned()
+            })
+            .collect::<Vec<_>>();
+        filters.push(format!("({})", city_filters.join(" OR ")));
+    }
+
+    if let Some(min_comp) = criteria.min_comp {
+        filters.push("(coalesce(salary_max_k, -1) = -1 OR salary_max_k >= ?)".to_owned());
+        parameters.push(Value::Double(min_comp));
+    }
+
+    filters
 }
 
 /// Parses a comma-delimited float string (from `array_to_string`) into a vector.

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getJob, rankJobs, searchJobs } from "./api";
+import { getJob, rankJobs, searchJobs, semanticSearch } from "./api";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
   const fetchMock = vi.fn().mockResolvedValue({
@@ -73,6 +73,27 @@ describe("rankJobs", () => {
     mockFetch("ranking method 'match' requires a configured model", false, 400);
     await expect(rankJobs({ method: "match" })).rejects.toThrow(
       "requires a configured model",
+    );
+  });
+});
+
+describe("semanticSearch", () => {
+  it("POSTs the query + filters and returns hits", async () => {
+    const hits = { results: [{ id: "a", score: 0.91 }] };
+    const fetchMock = mockFetch(hits);
+
+    const params = { query: "ml pipelines", functions: ["data"] };
+    expect(await semanticSearch(params)).toEqual(hits);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/semantic",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(params) }),
+    );
+  });
+
+  it("surfaces the server's error (e.g. no embeddings key)", async () => {
+    mockFetch("semantic search requires a configured embeddings model", false, 400);
+    await expect(semanticSearch({ query: "x" })).rejects.toThrow(
+      "requires a configured embeddings model",
     );
   });
 });

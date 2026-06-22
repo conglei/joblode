@@ -13,11 +13,13 @@
 //!   sharpen only the top of the taste order via a [`ModelClient`]. Requires a
 //!   configured key; absent, ranking degrades cleanly to the taste order.
 
+mod embed;
 mod gemini;
 mod model;
 mod pairwise;
 mod taste;
 
+pub use embed::{EmbedClient, OpenAiEmbedder};
 pub use gemini::GeminiClient;
 pub use model::{JobText, MatchScore, ModelClient};
 pub use taste::TasteModel;

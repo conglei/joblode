@@ -15,6 +15,10 @@ The server exposes three MCP tools today:
   `liked`/`applied`/… or `disliked`/`rejected`/…), and — if a cheap model is configured — refines the
   top with `method: "match"` or `"pairwise"` (these also need a `resume`). Without a key, the free
   feedback-driven ranking still works.
+- **`semantic_search`** — matches a free-text `query` (a description of the role/responsibilities) against
+  role embeddings by cosine similarity, scoring each role by its **best-matching variant** (title, JD, or
+  an alternate title) — useful when the messy structured fields don't filter cleanly. Takes the same hard
+  filters; returns compact rows with a `score`. **Requires an embeddings key** (see config).
 
 The in-conversation React UI lands in a later phase (DESIGN §8).
 
@@ -122,6 +126,10 @@ full. Structured fields are LLM extractions — confirm comp, work authorization
 | `JOBLODE_RANK_MATCH_MODEL` | `gemini-2.5-flash` | Model for the absolute `match` pass. |
 | `JOBLODE_RANK_PAIR_MODEL` | `gemini-2.5-flash-lite` | Model for the `pairwise` pass. |
 | `JOBLODE_RANK_BASE_URL` | Gemini OpenAI-compatible endpoint | Override for an OpenAI-compatible base URL. |
+| `JOBLODE_EMBED_PROVIDER` | *(unset)* | Set to `openai` to enable `semantic_search` / `/api/semantic`. |
+| `OPENAI_API_KEY` | *(unset)* | Embeddings key (override the var name with `JOBLODE_EMBED_API_KEY_ENV`). |
+| `JOBLODE_EMBED_MODEL` | `text-embedding-3-small` | Query embedding model — must match the dataset's vectors (1536-d). |
+| `JOBLODE_EMBED_BASE_URL` | OpenAI `/v1` | Override for an OpenAI-compatible embeddings base URL. |
 
 ## Notes & limits
 

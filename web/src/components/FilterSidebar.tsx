@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Button,
+  Divider,
   NumberInput,
   Stack,
   TagsInput,
@@ -36,11 +37,21 @@ function buildParams(state: {
 interface FilterSidebarProps {
   onSearch: (params: SearchParams) => void;
   loading: boolean;
+  /** When provided, a semantic-search box appears; filters apply to it too. */
+  onSemantic?: (query: string, params: SearchParams) => void;
+  semanticLoading?: boolean;
 }
 
 /** The hard-filter form. Multi-value fields take free-entry tags (substring or
- *  exact match, per the server); submitting runs a search. */
-export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
+ *  exact match, per the server); submitting runs a search. An optional semantic
+ *  box matches a free-text description against role embeddings, scoped by the
+ *  same filters. */
+export function FilterSidebar({
+  onSearch,
+  loading,
+  onSemantic,
+  semanticLoading,
+}: FilterSidebarProps) {
   const [titles, setTitles] = useState<string[]>([]);
   const [companies, setCompanies] = useState<string[]>([]);
   const [cities, setCities] = useState<string[]>([]);
@@ -48,11 +59,22 @@ export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
   const [levels, setLevels] = useState<string[]>([]);
   const [country, setCountry] = useState("");
   const [minComp, setMinComp] = useState<number | "">("");
+  const [query, setQuery] = useState("");
+
+  function currentParams() {
+    return buildParams({
+      titles,
+      companies,
+      cities,
+      functions,
+      levels,
+      country,
+      minComp,
+    });
+  }
 
   function submit() {
-    onSearch(
-      buildParams({ titles, companies, cities, functions, levels, country, minComp }),
-    );
+    onSearch(currentParams());
   }
 
   return (
@@ -64,6 +86,27 @@ export function FilterSidebar({ onSearch, loading }: FilterSidebarProps) {
         submit();
       }}
     >
+      {onSemantic ? (
+        <>
+          <Title order={4}>Semantic search</Title>
+          <TextInput
+            label="Describe the role / responsibilities"
+            placeholder="e.g. building data pipelines for ML"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
+          <Button
+            type="button"
+            variant="light"
+            disabled={query.trim().length === 0}
+            loading={semanticLoading}
+            onClick={() => onSemantic(query.trim(), currentParams())}
+          >
+            Semantic search
+          </Button>
+          <Divider />
+        </>
+      ) : null}
       <Title order={4}>Filters</Title>
       <TagsInput
         label="Title"

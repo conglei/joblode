@@ -304,6 +304,13 @@ reaches parity.
   model; unconfigured model errors) + `embeddings()` core cases. *Still outstanding (web-facing half of
   Phase 4):* SSE streaming of ranking progress for the web UI, and the `rank` param fused onto `search_jobs`
   (a round-trip optimization).
+- **Phase 4a — semantic search (DuckDB vector cosine) — complete.** `JobStore::semantic_search` ranks the
+  corpus by `array_cosine_similarity` of a query vector to each role's **best-matching variant**
+  (`title_embedding`, `jd_embedding`, or any `alt_titles_embedding`), under the same hard filters — cutting
+  through the noisy structured fields. The free-text query is embedded in the corpus's space (OpenAI
+  `text-embedding-3-small`, 1536-d) via a config-gated `EmbedClient`; exposed as the `semantic_search` MCP
+  tool, `POST /api/semantic`, and a sidebar search box. (`list_cosine_similarity` rejects the parquet's
+  nullable-element lists; the fixed-size `::FLOAT[1536]` array cast is required.)
 - **Phase 4b — embedding recall + distilled ranker (optional, `nalgebra`).** Richer than the shipped Rocchio
   taste ranker: port `rank.py` (lexical-seed ridge ranker in embedding space) and `btrank --distill` (PCA +
   logistic over embeddings → score the whole corpus with no LLM calls). *Tests:* recovers a planted signal;

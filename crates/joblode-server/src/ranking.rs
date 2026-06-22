@@ -201,10 +201,20 @@ fn prepare_candidates(
     })
 }
 
-/// Shared deterministic model for the MCP and REST ranking tests.
+/// Shared deterministic doubles for the MCP and REST ranking/semantic tests.
 #[cfg(test)]
 pub(crate) mod testing {
-    use joblode_rank::{JobText, MatchScore, ModelClient};
+    use joblode_rank::{EmbedClient, JobText, MatchScore, ModelClient};
+
+    /// Embeds any text to a fixed vector — lets semantic tests pick the target.
+    pub(crate) struct FixedEmbed(pub Vec<f32>);
+
+    #[async_trait::async_trait]
+    impl EmbedClient for FixedEmbed {
+        async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+            Ok(self.0.clone())
+        }
+    }
 
     /// Scores the `favored` id at 90 and everything else at 10; `compare` orders
     /// by id. No network — fully reproducible.

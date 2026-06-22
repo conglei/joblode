@@ -214,6 +214,62 @@ fn embeddings_of_no_ids_is_empty() {
 }
 
 #[test]
+fn semantic_search_orders_by_cosine_similarity() {
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+
+    // The "engineering" direction [1,0,0,0] should surface city-direct first.
+    let (jobs, sims): (Vec<String>, Vec<f32>) = store
+        .semantic_search(&[1.0, 0.0, 0.0, 0.0], &Criteria::default(), 3)
+        .expect("semantic search should succeed")
+        .into_iter()
+        .map(|(job, sim)| (job.id, sim))
+        .unzip();
+
+    assert_eq!(jobs[0], "city-direct");
+    assert!(
+        (sims[0] - 1.0).abs() < 1e-4,
+        "top sim ~1.0, got {}",
+        sims[0]
+    );
+    // Descending order.
+    assert!(sims[0] >= sims[1] && sims[1] >= sims[2]);
+}
+
+#[test]
+fn semantic_search_respects_hard_filters() {
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+
+    // Restrict to data roles; the engineering query still ranks, but only data.
+    let ids: Vec<String> = store
+        .semantic_search(
+            &[1.0, 0.0, 0.0, 0.0],
+            &Criteria {
+                functions: vec!["data".into()],
+                ..Criteria::default()
+            },
+            10,
+        )
+        .expect("semantic search")
+        .into_iter()
+        .map(|(job, _)| job.id)
+        .collect();
+
+    assert!(!ids.contains(&"city-direct".to_string()));
+    assert!(ids
+        .iter()
+        .all(|id| id.starts_with("comp-") || id == "city-location"));
+}
+
+#[test]
+fn semantic_search_of_empty_query_is_empty() {
+    let store = JobStore::open(rank_fixture()).expect("rank fixture should open");
+    assert!(store
+        .semantic_search(&[], &Criteria::default(), 5)
+        .expect("ok")
+        .is_empty());
+}
+
+#[test]
 fn a_null_embedding_comes_back_empty_not_an_error() {
     // The live dataset has rows with a NULL jd_embedding; that must not error.
     let store = JobStore::open(rank_fixture()).expect("rank fixture should open");

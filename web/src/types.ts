@@ -75,3 +75,18 @@ export interface Ranked {
 export interface RankResults {
   results: Ranked[];
 }
+
+/** `semantic` input: a free-text query plus the same hard filters. */
+export interface SemanticParams extends SearchParams {
+  query: string;
+}
+
+/** One semantic hit: a compact row plus its cosine similarity in [-1, 1]. */
+export interface SemanticHit extends JobSummary {
+  score: number;
+}
+
+/** `semantic` result: rows ordered by similarity, best first. */
+export interface SemanticResults {
+  results: SemanticHit[];
+}
