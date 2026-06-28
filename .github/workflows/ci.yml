@@ -28,7 +28,7 @@ jobs:
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - run: cargo build --workspace
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           flags: rust
@@ -48,7 +48,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo run lint typecheck test build
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: web/coverage/lcov.info
           flags: web
